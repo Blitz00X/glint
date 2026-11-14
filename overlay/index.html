@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Glint</title>
+    <link rel="stylesheet" href="./overlay.css" />
+  </head>
+  <body>
+    <button id="badge" type="button" aria-label="Open Glint notification">
+      <span class="corner tl" aria-hidden="true"></span>
+      <span class="corner tr" aria-hidden="true"></span>
+      <span class="corner bl" aria-hidden="true"></span>
+      <span class="corner br" aria-hidden="true"></span>
+      <span class="badge-mark" aria-hidden="true">!</span>
+      <span id="badge-count" class="badge-count" hidden></span>
+    </button>
+    <div id="stack" aria-live="polite"></div>
+    <section id="feed" hidden aria-label="Glint group feed">
+      <span class="corner tl" aria-hidden="true"></span>
+      <span class="corner br" aria-hidden="true"></span>
+      <header class="feed-head">
+        <span class="brand">GLINT</span>
+        <span class="feed-title">// ALL AGENTS</span>
+        <span id="feed-meta" class="feed-meta"></span>
+      </header>
+      <div id="feed-list" class="feed-list" role="log"></div>
+      <footer class="feed-foot"><span data-feed-hotkey="1">ctrl+shift+f</span> closes · last 100 messages</footer>
+    </section>
+    <script src="./sound.js"></script>
+    <script src="./overlay.js"></script>
+  </body>
+</html>

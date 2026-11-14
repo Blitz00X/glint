@@ -1,0 +1,13 @@
+node_modules/
+dist/
+coverage/
+*.log
+*.jsonl
+*.glint-backup
+.glint/
+daemon.json
+dnd-saved.json
+.env
+.env.*
+*.tar.gz
+.DS_Store
