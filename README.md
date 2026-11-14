@@ -14,12 +14,38 @@ When Claude Code, Codex, Antigravity (`agy`), OpenCode or Cursor needs a decisio
 
 - **Holocall.** Every question rings like a call: the caller card shows the agent, the project, a short session tag (`#a3f9`) and a color that stays the same for that session. Answer with `1`–`9`, Enter, or free text. The answer goes only to that agent, the panel closes with **CALL ENDED**, and the next queued call rings. Calls that arrive meanwhile wait as one-line "on hold" strips (click one to switch).
 - **Group feed.** Every call, answer and `notify` from every agent lands in one chat-style feed (last 100 events). Toggle it with `Ctrl+Shift+F`, read it with `glint feed`, or over HTTP at `GET /v1/events?since=N`.
-- **Three layouts.** `deneme1` / `corner` (top-right stack, default), `deneme2` / `center` (large centered HUD), `deneme3` / `badge` (a neon `!` badge top-left that opens on click). Switch live with `glint layout <mode>`.
+- **Seven overlay styles, picked from a UI.** `glint pick` (or `Ctrl+Shift+L`) opens the concept picker: preview each style with a live sample call, then *Use this*. See [Pick a style](#pick-a-style).
 - **Sound.** Incoming / answered / ended / notice sounds are synthesized with WebAudio. `GLINT_MUTE=1` silences them.
 - **Hooks that never forget.** If the agent stops without asking, a Stop hook rings a call with the agent's last message; whatever you type becomes its next instruction.
 - **Stays visible.** On GNOME, desktop notification banners are paused while a call is open (and restored afterwards), and panels sit below the banner zone.
 
 ![The group feed](docs/group-feed.png)
+
+## Pick a style
+
+```bash
+node dist/cli.js pick        # or: glint settings, or press Ctrl+Shift+L
+```
+
+The picker shows all nine interface concepts as cards. **Preview** rings a real sample call in that style (it hangs up by itself after 45 s, or press Esc on it); **Use this** switches the running overlay right away (no restart) and saves the choice to `~/.glint/config.json` (mode `0600`).
+
+![The concept picker](docs/picker.png)
+
+| # | concept | layout name | status |
+|---|---|---|---|
+| 01 | Top-right stack | `deneme1` (`corner`) | ✅ built (default) |
+| 02 | Giant HUD | `deneme2` (`center`) | ✅ built |
+| 03 | Bang badge | `deneme3` (`badge`) | ✅ built |
+| 04 | Bottom ticker | `ticker` | ✅ built |
+| 05 | Cursor bubble | `bubble` | ✅ built |
+| 06 | Edge strip | `edge` | ✅ built |
+| 07 | Radial picker | — | coming soon (not selectable) |
+| 08 | Island pill | `island` | ✅ built |
+| 09 | Mission control | — | coming soon (not selectable) |
+
+![Bottom ticker](docs/layout-ticker.png)
+
+**Which style wins.** At daemon start: an explicitly set, valid `GLINT_LAYOUT` → the picker's saved choice in `~/.glint/config.json` → `deneme1`. While running, the last *Use this* / `glint layout <name>` wins (and is saved). An agent can still force a style for a single call with the MCP `layout` argument. If `GLINT_LAYOUT` is set, the picker says so: your pick applies now but the next start uses the env var until you unset it.
 
 ## Install
 
@@ -33,7 +59,7 @@ npm run build
 npm run demo        # rings a few sample calls
 ```
 
-Then wire it into your agents. `glint install <harness>` prints the MCP server, hook and rule snippets; `--write` merges them into the harness's global config (every changed file is backed up as `*.glint-backup`, existing hooks are kept, commented JSONC is edited in place, not rewritten):
+Then wire it into your agents. `glint install <harness>` prints the MCP server, hook and rule snippets; `--write` merges them into the harness's global config (every changed file is backed up as `<file>.glint-backup-<timestamp>`, existing hooks are kept, commented JSONC is edited in place, not rewritten):
 
 ```bash
 node dist/cli.js install claude   --write
@@ -43,6 +69,10 @@ node dist/cli.js install opencode --write
 ```
 
 Options: `--approvals` also routes PreToolUse permission prompts through Glint; `--target DIR` writes project-level config instead.
+
+To remove it again, `glint uninstall <harness>` prints what it would take out and `--write` does it. Only Glint's own entries go (other hooks, MCP servers and your notes stay), and every changed file is backed up first. `glint doctor` checks Node, Electron, the display, the daemon, the active layout and its source, config file permissions, GNOME DND and which harnesses have Glint's MCP server, hook and rule.
+
+Backups are timestamped, `<file>.glint-backup-YYYYMMDD-HHMMSS`, so running install or uninstall again never overwrites an older backup.
 
 | harness | MCP server | Stop hook | rule |
 |---|---|---|---|
@@ -115,6 +145,7 @@ Cursor uses the same JSON in `.cursor/mcp.json` (add `"type": "stdio"`). Streama
 | Esc | Dismiss / hang up. The agent receives `status: "dismissed"`. |
 | Ctrl+Shift+G | Focus the newest panel (Cmd on macOS). `GLINT_HOTKEY` overrides. |
 | Ctrl+Shift+F | Toggle the group feed. `GLINT_FEED_HOTKEY` overrides. |
+| Ctrl+Shift+L | Open the concept picker. `GLINT_PICKER_HOTKEY` overrides. |
 
 ## Environment variables
 
@@ -123,12 +154,13 @@ Cursor uses the same JSON in `.cursor/mcp.json` (add `"type": "stdio"`). Streama
 | `GLINT_HOOK` | on | `0` makes every hook a no-op (the quickest way to disable hooks everywhere). |
 | `GLINT_DND` | on (GNOME) | `0` stops Glint from pausing GNOME notification banners during calls. |
 | `GLINT_TOP_OFFSET` | `168` on Linux, `16` elsewhere | Distance in px from the top of the work area to the first panel. |
-| `GLINT_LAYOUT` | `deneme1` | `deneme1`/`corner`, `deneme2`/`center`, `deneme3`/`badge`. |
+| `GLINT_LAYOUT` | unset | Start layout: `deneme1`/`corner`, `deneme2`/`center`, `deneme3`/`badge`, `ticker`, `bubble`, `edge`, `island`. When set it wins over the picker's saved choice at start. |
 | `GLINT_MUTE` | off | `1` silences call sounds. |
 | `GLINT_HOOK_TIMEOUT_MS` | `600000` | How long a Stop call rings. |
 | `GLINT_HOOK_MAX_CHAIN` | `8` | Max continuations in a row. |
 | `GLINT_APPROVAL_TIMEOUT_MS` | `120000` | How long a PreToolUse approval call rings. |
-| `GLINT_HOTKEY` / `GLINT_FEED_HOTKEY` | `Ctrl+Shift+G` / `Ctrl+Shift+F` | Electron accelerators. |
+| `GLINT_HOTKEY` / `GLINT_FEED_HOTKEY` / `GLINT_PICKER_HOTKEY` | `Ctrl+Shift+G` / `Ctrl+Shift+F` / `Ctrl+Shift+L` | Electron accelerators. |
+| `GLINT_HOOK_LOG` | off | `1` appends a **redacted** copy of every hook payload to `~/.glint/hook-payloads.jsonl` (mode `0600`) for debugging. Prompts, assistant messages, transcript paths, `cwd`, tool input and any other free text become `<redacted:N chars>`; only numbers, booleans and enum-like fields (event name, stop flags, chain counters) are kept. Delete the file when done. |
 | `GLINT_AGENT` / `GLINT_PROJECT` | — | Default labels on the panel. |
 | `GLINT_HOME` | `~/.glint` | State directory (daemon info, token, logs, saved DND state). |
 | `GLINT_NO_SANDBOX` | off | `1` if Chromium's sandbox can't start (containers). |
@@ -142,8 +174,11 @@ While at least one call is open, Glint sets `org.gnome.desktop.notifications sho
 ```bash
 node dist/cli.js ask "Ship the migration?" --choice "Apply it now" --choice "Not yet" --agent Codex
 node dist/cli.js notify "Index finished" --agent "Claude Code"
-node dist/cli.js layout center
+node dist/cli.js pick                  # concept picker
+node dist/cli.js layout island         # switch style without the UI (saved)
 node dist/cli.js feed --json
+node dist/cli.js doctor
+node dist/cli.js uninstall codex --write
 node dist/cli.js status
 node dist/cli.js daemon
 ```
@@ -168,10 +203,22 @@ Tests cover the daemon protocol, real MCP clients (in-memory, stdio, streamable 
 
 ## Platform notes
 
-- Tested end to end on Linux: GNOME on Wayland (overlay runs through XWayland with `--ozone-platform=x11`) and X11 with Xfwm, against Claude Code, Codex CLI, Antigravity and OpenCode 2.x.
+- Tested end to end on Linux: GNOME on Wayland (through XWayland) and X11 with Xfwm, against Claude Code, Codex CLI, Antigravity and OpenCode 2.x.
 - True translucency needs a compositor.
 - macOS uses the same stock Electron window calls but has not been tested; Windows hasn't either.
-- Not built yet: a fallback watcher that rings when an agent sits idle without hooks.
+
+## Known gaps
+
+- **Wayland is forced to X11.** On Linux the overlay always starts with `--ozone-platform=x11`, i.e. through XWayland, because transparent always-on-top windows are not reliable on native Wayland. Native Wayland (`GLINT_OZONE_PLATFORM=wayland`) is untested; on a session without XWayland the overlay will not draw.
+- **Chromium sandbox.** If the SUID sandbox helper isn't set up (common with npm-installed Electron and in containers), the first start fails and the daemon retries once with `--no-sandbox` (logged in `~/.glint/daemon.log`). The overlay only loads Glint's own local files with `contextIsolation` on and `nodeIntegration` off, but running without the sandbox is still weaker isolation. Fix it properly with `sudo chown root node_modules/electron/dist/chrome-sandbox && sudo chmod 4755 node_modules/electron/dist/chrome-sandbox`, or opt in explicitly with `GLINT_NO_SANDBOX=1`.
+- **No fallback watcher.** Glint only rings when the agent calls `ask_user` or a lifecycle hook fires. An agent that sits waiting without either (no hook support, hooks not trusted yet, a TUI prompt) stays silent.
+- **No UI end-to-end tests in CI.** The test suite covers the daemon, MCP clients, hooks, installers, config and DND logic headlessly; the Electron window, layouts, multi-monitor placement and the picker are only checked by hand (see `scripts/`).
+- **Two concepts are not built yet:** 07 Radial picker and 09 Mission control show *coming soon* in the picker.
+- **Fixed offsets.** Panels start `GLINT_TOP_OFFSET` px below the top on Linux (default 168) to clear notification banners; adjust it per screen.
+
+## npm
+
+The npm name `glint` belongs to an unrelated package, so Glint is **not published to npm** (the package is marked `private`). Install it from this repository as shown above.
 
 ## License
 

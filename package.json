@@ -1,7 +1,31 @@
 {
   "name": "glint",
-  "version": "0.2.0",
+  "version": "0.3.0",
+  "private": true,
   "description": "Holographic prompts for AI coding agents. An MCP server pops a translucent TUI over your desktop and returns the answer.",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "ai-agents",
+    "claude-code",
+    "codex",
+    "antigravity",
+    "opencode",
+    "overlay",
+    "electron",
+    "notifications",
+    "hooks",
+    "cyberpunk"
+  ],
+  "author": "Kutay Karahan",
+  "homepage": "https://github.com/Blitz00X/glint#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Blitz00X/glint.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Blitz00X/glint/issues"
+  },
   "type": "module",
   "license": "MIT",
   "bin": {
@@ -30,5 +54,15 @@
     "@types/node": "^24.10.1",
     "tsx": "^4.20.6",
     "typescript": "^7.0.2"
-  }
+  },
+  "files": [
+    "dist/",
+    "overlay/",
+    "plugins/",
+    "skills/",
+    "src/electron/preload.cjs",
+    "src/electron/picker-preload.cjs",
+    "README.md",
+    "LICENSE"
+  ]
 }
