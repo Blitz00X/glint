@@ -29,7 +29,7 @@ test("claude install merges the Stop hook and MCP server, keeps other hooks, is 
   const claudeJson = JSON.parse(fs.readFileSync(path.join(h, ".claude.json"), "utf8"));
   assert.deepEqual(claudeJson.mcpServers.glint.args, ["/opt/glint/dist/cli.js", "mcp"]);
   assert.match(fs.readFileSync(path.join(h, ".claude", "CLAUDE.md"), "utf8"), /ask_user/);
-  assert.ok(fs.existsSync(path.join(h, ".claude", "settings.json.glint-backup")));
+  assert.ok(fs.readdirSync(path.join(h, ".claude")).some((f) => /^settings\.json\.glint-backup-\d{8}-\d{6}/.test(f)), "timestamped backup");
 
   const again = applyInstall(planInstall("claude", opts(h)));
   assert.deepEqual(again, [], "second run changes nothing");
@@ -118,7 +118,7 @@ test("opencode install adds glint inside an existing mcp block of a commented js
   assert.deepEqual(parsed.plugin, ["a", "b"], "plugin list untouched");
   assert.deepEqual(applyInstall(planInstall("opencode", opts(h))).filter((f) => f.endsWith(".jsonc")), [], "idempotent");
   assert.equal(parsed.provider.x.mcp, "not this one");
-  assert.ok(fs.existsSync(path.join(dir, "opencode.jsonc.glint-backup")));
+  assert.ok(fs.readdirSync(dir).some((f) => f.startsWith("opencode.jsonc.glint-backup-")));
 });
 
 test("agy install writes a flat Stop handler into .agents/hooks.json under --target", () => {

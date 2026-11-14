@@ -459,24 +459,291 @@ export function planInstall(harness: Harness, options: InstallOptions = {}): Ins
   return { harness, steps, notes };
 }
 
-export function applyInstall(plan: InstallPlan): string[] {
+/** `file.glint-backup-YYYYMMDD-HHMMSS`, with a counter if that name is taken. Never overwrites. */
+export function backupPath(file: string, now: Date = new Date()): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const stamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+  let candidate = `${file}.glint-backup-${stamp}`;
+  for (let i = 2; fs.existsSync(candidate); i++) candidate = `${file}.glint-backup-${stamp}-${i}`;
+  return candidate;
+}
+
+export function applyInstall(plan: InstallPlan, now: Date = new Date()): string[] {
   const written: string[] = [];
   for (const step of plan.steps) {
     if (!step.changed || step.content == null) continue;
     if (step.remove) {
       if (fs.existsSync(step.file)) {
-        fs.copyFileSync(step.file, `${step.file}.glint-backup`);
+        fs.copyFileSync(step.file, backupPath(step.file, now));
         fs.rmSync(step.file);
         written.push(step.file);
       }
       continue;
     }
     fs.mkdirSync(path.dirname(step.file), { recursive: true });
-    if (fs.existsSync(step.file)) fs.copyFileSync(step.file, `${step.file}.glint-backup`);
+    if (fs.existsSync(step.file)) fs.copyFileSync(step.file, backupPath(step.file, now));
     fs.writeFileSync(step.file, step.content);
     written.push(step.file);
   }
   return written;
+}
+
+/* ----------------------------------------------------------------- uninstall */
+
+function isGlintCommand(command: unknown, harness: Harness): boolean {
+  return typeof command === "string" && /glint/i.test(command) && command.includes(`hook ${harness} `);
+}
+
+/** Remove Glint handlers from a hooks map ({Event: [entry...]}); drops events left empty. */
+export function stripGlintHooks(hooks: Record<string, unknown>, harness: Harness): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [event, list] of Object.entries(hooks)) {
+    if (!Array.isArray(list)) {
+      out[event] = list;
+      continue;
+    }
+    const kept: unknown[] = [];
+    for (const entry of list) {
+      if (!entry || typeof entry !== "object") {
+        kept.push(entry);
+        continue;
+      }
+      const record = entry as Record<string, unknown>;
+      if (Array.isArray(record.hooks)) {
+        const inner = record.hooks.filter((h) => !(h && typeof h === "object" && isGlintCommand((h as Record<string, unknown>).command, harness)));
+        if (inner.length > 0) kept.push(inner.length === record.hooks.length ? entry : { ...record, hooks: inner });
+        continue;
+      }
+      if (!isGlintCommand(record.command, harness)) kept.push(entry);
+    }
+    if (kept.length > 0) out[event] = kept;
+  }
+  return out;
+}
+
+function ruleRemovalStep(file: string, description: string): InstallStep | null {
+  const existing = readText(file);
+  if (existing == null || !existing.includes(MARKER)) return null;
+  const exact = `${MARKER}\n${ruleText()}\n`;
+  let content: string | null = null;
+  if (existing.includes(exact)) content = existing.replace(exact, "");
+  else if (existing.includes(`${MARKER}\n${ruleText()}`)) content = existing.replace(`${MARKER}\n${ruleText()}`, "");
+  if (content == null) {
+    return { file, description: `${description} (the rule text was edited; remove the block after ${MARKER} by hand)`, content: null, snippet: MARKER, changed: false };
+  }
+  content = content.replace(/\n{3,}/g, "\n\n").replace(/\s*$/, "");
+  content = content ? `${content}\n` : "";
+  return { file, description, content, snippet: MARKER, changed: content !== existing };
+}
+
+/** Remove a TOML table and its sub-tables (e.g. [mcp_servers.glint] and [mcp_servers.glint.env]). */
+export function removeTomlTable(text: string, table: string): string {
+  const lines = text.split("\n");
+  const out: string[] = [];
+  let skipping = false;
+  for (const line of lines) {
+    const header = /^\s*\[\[?([^\]]+)\]\]?\s*(#.*)?$/.exec(line);
+    if (header) {
+      const name = header[1]!.trim();
+      skipping = name === table || name.startsWith(`${table}.`);
+    }
+    if (!skipping) out.push(line);
+  }
+  return out.join("\n").replace(/\n{3,}/g, "\n\n");
+}
+
+/**
+ * Remove member `key` from the top-level object `parent` of a JSONC document,
+ * keeping comments and formatting elsewhere. Returns null if it isn't there.
+ */
+export function jsoncRemoveMember(text: string, parent: string, key: string): string | null {
+  const { parentOpen } = findTopLevelOpen(text, parent, "{");
+  if (parentOpen < 0) return null;
+  let depth = 0;
+  let keyStart = -1;
+  let lastString: { value: string; start: number } | null = null;
+  for (let i = parentOpen + 1; i < text.length; i++) {
+    const c = text[i]!;
+    const next = text[i + 1];
+    if (c === "/" && next === "/") {
+      while (i < text.length && text[i] !== "\n") i++;
+      continue;
+    }
+    if (c === "/" && next === "*") {
+      i += 2;
+      while (i < text.length && !(text[i] === "*" && text[i + 1] === "/")) i++;
+      i++;
+      continue;
+    }
+    if (c === '"') {
+      const start = i;
+      let j = i + 1;
+      let value = "";
+      while (j < text.length && text[j] !== '"') {
+        if (text[j] === "\\") {
+          value += text[j + 1] ?? "";
+          j += 2;
+          continue;
+        }
+        value += text[j];
+        j++;
+      }
+      if (depth === 0) lastString = { value, start };
+      i = j;
+      continue;
+    }
+    if (c === ":" && depth === 0 && lastString?.value === key) {
+      keyStart = lastString.start;
+      // Skip the value.
+      let j = i + 1;
+      let d = 0;
+      let started = false;
+      for (; j < text.length; j++) {
+        const ch = text[j]!;
+        if (ch === '"') {
+          j++;
+          while (j < text.length && text[j] !== '"') j += text[j] === "\\" ? 2 : 1;
+          started = true;
+          if (d === 0) {
+            j++;
+            break;
+          }
+          continue;
+        }
+        if (ch === "{" || ch === "[") {
+          d++;
+          started = true;
+          continue;
+        }
+        if (ch === "}" || ch === "]") {
+          if (d === 0) break;
+          d--;
+          if (d === 0) {
+            j++;
+            break;
+          }
+          continue;
+        }
+        if (d === 0 && started && (ch === "," || /\s/.test(ch))) break;
+        if (!/\s/.test(ch)) started = true;
+      }
+      let end = j;
+      // Eat a trailing comma, or else the comma before the member.
+      let k = end;
+      while (k < text.length && /[ \t\r\n]/.test(text[k]!)) k++;
+      let start = keyStart;
+      if (text[k] === ",") {
+        end = k + 1;
+      } else {
+        let b = keyStart - 1;
+        while (b > parentOpen && /[ \t\r\n]/.test(text[b]!)) b--;
+        if (text[b] === ",") start = b;
+      }
+      // Also drop the whitespace that indented the member.
+      let lineStart = start;
+      while (lineStart > 0 && (text[lineStart - 1] === " " || text[lineStart - 1] === "\t")) lineStart--;
+      if (text[lineStart - 1] === "\n" && text[start] !== ",") start = lineStart - 1;
+      return text.slice(0, start) + text.slice(end);
+    }
+    if (c === "{" || c === "[") depth++;
+    else if (c === "}" || c === "]") {
+      if (depth === 0) break;
+      depth--;
+    }
+  }
+  return null;
+}
+
+export function planUninstall(harness: Harness, options: InstallOptions = {}): InstallPlan {
+  const home = options.home ?? process.env.HOME ?? os.homedir();
+  const target = options.target ? path.resolve(options.target) : null;
+  const steps: InstallStep[] = [];
+  const notes: string[] = [];
+  const push = (step: InstallStep | null) => {
+    if (step && (step.changed || step.content == null)) steps.push(step);
+  };
+  const jsonRemoval = (file: string, description: string, mutate: (obj: Record<string, unknown>) => void) => {
+    const existing = readJsonObject(file);
+    if (existing === null) return;
+    if (existing === "invalid") {
+      steps.push({ file, description: `${description} (not plain JSON; remove by hand)`, content: null, snippet: "", changed: false });
+      return;
+    }
+    const obj = structuredClone(existing);
+    mutate(obj);
+    const content = `${JSON.stringify(obj, null, 2)}\n`;
+    if (JSON.stringify(obj) !== JSON.stringify(existing)) steps.push({ file, description, content, snippet: "", changed: true });
+  };
+  const dropHooks = (obj: Record<string, unknown>) => {
+    if (obj.hooks && typeof obj.hooks === "object" && !Array.isArray(obj.hooks)) {
+      const next = stripGlintHooks(obj.hooks as Record<string, unknown>, harness);
+      if (Object.keys(next).length === 0) delete obj.hooks;
+      else obj.hooks = next;
+    }
+  };
+  const dropServer = (obj: Record<string, unknown>, field: string) => {
+    const servers = obj[field];
+    if (servers && typeof servers === "object" && "glint" in servers) {
+      delete (servers as Record<string, unknown>).glint;
+    }
+  };
+
+  if (harness === "claude") {
+    jsonRemoval(target ? path.join(target, ".claude", "settings.json") : path.join(home, ".claude", "settings.json"), "remove Glint hooks from Claude Code settings", dropHooks);
+    jsonRemoval(target ? path.join(target, ".mcp.json") : path.join(home, ".claude.json"), "remove the glint MCP server", (obj) => dropServer(obj, "mcpServers"));
+    push(ruleRemovalStep(target ? path.join(target, "CLAUDE.md") : path.join(home, ".claude", "CLAUDE.md"), "remove the Glint rule from CLAUDE.md"));
+  }
+
+  if (harness === "codex") {
+    const dir = target ? path.join(target, ".codex") : path.join(home, ".codex");
+    const configFile = path.join(dir, "config.toml");
+    const existing = readText(configFile);
+    if (existing != null) {
+      let content = removeTomlTable(existing, "mcp_servers.glint");
+      content = content
+        .split("\n")
+        .filter((line) => !(/^\s*notify\s*=/.test(line) && /glint/i.test(line) && line.includes('"hook", "codex", "notify"')))
+        .join("\n")
+        .replace(/^\n+/, "");
+      if (content !== existing) steps.push({ file: configFile, description: "remove the glint MCP server and notify program from config.toml", content, snippet: "", changed: true });
+    }
+    jsonRemoval(path.join(dir, "hooks.json"), "remove Glint hooks from Codex hooks.json", dropHooks);
+    push(ruleRemovalStep(target ? path.join(target, "AGENTS.md") : path.join(dir, "AGENTS.md"), "remove the Glint rule from AGENTS.md"));
+  }
+
+  if (harness === "agy") {
+    const root = target ? path.join(target, ".agents") : path.join(home, ".gemini", "config");
+    jsonRemoval(path.join(root, "hooks.json"), "remove the named `glint` hook from Antigravity hooks.json", (obj) => {
+      delete obj.glint;
+    });
+    if (!target) jsonRemoval(path.join(root, "mcp_config.json"), "remove the glint MCP server from mcp_config.json", (obj) => dropServer(obj, "mcpServers"));
+    push(ruleRemovalStep(path.join(root, "AGENTS.md"), "remove the Glint rule from AGENTS.md"));
+  }
+
+  if (harness === "opencode") {
+    const configDir = target ?? path.join(home, ".config", "opencode");
+    const pluginFile = target ? path.join(target, ".opencode", "plugin", "glint.js") : path.join(configDir, "plugin", "glint.js");
+    const plugin = readText(pluginFile);
+    if (plugin != null) {
+      if (/Glint/.test(plugin)) steps.push({ file: pluginFile, description: "remove the Glint OpenCode plugin", content: "", remove: true, snippet: "", changed: true });
+      else notes.push(`${pluginFile} does not look like Glint's plugin; left alone.`);
+    }
+    const jsonFile = path.join(configDir, "opencode.json");
+    const jsoncFile = path.join(configDir, "opencode.jsonc");
+    const jsonc = readText(jsoncFile);
+    if (jsonc != null && readText(jsonFile) == null) {
+      const content = jsoncRemoveMember(jsonc, "mcp", "glint");
+      if (content != null) steps.push({ file: jsoncFile, description: "remove the glint MCP server from opencode.jsonc (comments kept)", content, snippet: "", changed: content !== jsonc });
+    } else {
+      jsonRemoval(jsonFile, "remove the glint MCP server from opencode.json", (obj) => dropServer(obj, "mcp"));
+    }
+    push(ruleRemovalStep(path.join(configDir, "AGENTS.md"), "remove the Glint rule from AGENTS.md"));
+    notes.push("Restart OpenCode (and any `opencode serve` service) so the plugin unloads.");
+  }
+
+  if (steps.length === 0) notes.push(`Nothing to remove: Glint is not installed for ${harness}.`);
+  notes.push("Every changed file is backed up first as <file>.glint-backup-<timestamp>.");
+  return { harness, steps, notes };
 }
 
 export function renderPlan(plan: InstallPlan, written: string[] | null): string {
@@ -496,6 +763,6 @@ export function renderPlan(plan: InstallPlan, written: string[] | null): string 
     lines.push(`## ${step.description}`, `${step.file}  [${status}]`, "", step.snippet, "");
   }
   if (plan.notes.length) lines.push("## Notes", ...plan.notes.map((note) => `- ${note}`), "");
-  if (!written) lines.push("Run again with --write to apply (existing files are backed up as *.glint-backup).");
+  if (!written) lines.push("Run again with --write to apply (existing files are backed up as <file>.glint-backup-<timestamp>).");
   return lines.join("\n");
 }

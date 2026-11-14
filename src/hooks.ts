@@ -491,6 +491,45 @@ function summarizeTool(name: string, input: unknown): string {
 
 /* ---------- main entry ---------- */
 
+/** Payload keys whose string values are kept in GLINT_HOOK_LOG; every other string is redacted. */
+const LOG_KEEP_KEYS = new Set([
+  "hook_event_name",
+  "hookEventName",
+  "event",
+  "type",
+  "stop_hook_active",
+  "continuationActive",
+  "executionNum",
+  "chain",
+  "terminationReason",
+  "stopReason",
+  "stop_reason",
+  "tool_name",
+  "toolName",
+  "name",
+  "source",
+  "model",
+  "permission_mode",
+]);
+
+/**
+ * GLINT_HOOK_LOG writes the hook payload *shape* for debugging, not its
+ * content: prompts, assistant messages, transcript paths, cwd, tool input and
+ * any other free text are replaced with `<redacted:N chars>`. Numbers,
+ * booleans and a short allow-list of enum-like fields are kept.
+ */
+export function redactHookPayload(value: unknown, key = ""): unknown {
+  if (value == null || typeof value === "number" || typeof value === "boolean") return value;
+  if (typeof value === "string") return LOG_KEEP_KEYS.has(key) && value.length <= 80 ? value : `<redacted:${value.length} chars>`;
+  if (Array.isArray(value)) return value.slice(0, 50).map((item) => redactHookPayload(item, key));
+  if (typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) out[k] = redactHookPayload(v, k);
+    return out;
+  }
+  return "<redacted>";
+}
+
 export async function runHook(
   harness: Harness,
   event: HookEvent,
@@ -504,7 +543,7 @@ export async function runHook(
     try {
       const dir = deps.stateDir ?? glintHome();
       fs.mkdirSync(dir, { recursive: true });
-      fs.appendFileSync(path.join(dir, "hook-payloads.jsonl"), `${JSON.stringify({ at: now(), harness, event, payload })}\n`);
+      fs.appendFileSync(path.join(dir, "hook-payloads.jsonl"), `${JSON.stringify({ at: now(), harness, event, payload: redactHookPayload(payload) })}\n`, { mode: 0o600 });
     } catch {
       // debugging aid only
     }
