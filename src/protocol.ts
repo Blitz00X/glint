@@ -11,18 +11,41 @@ export const MAX_EVENTS = 100;
 export const CALL_KINDS = ["question", "stop", "approval"] as const;
 export const callKindSchema = z.enum(CALL_KINDS);
 export type CallKind = z.infer<typeof callKindSchema>;
-export const LAYOUT_MODES = ["deneme1", "deneme2", "deneme3"] as const;
+export const LAYOUT_MODES = ["deneme1", "deneme2", "deneme3", "ticker", "bubble", "edge", "island"] as const;
 
 export const layoutSchema = z.enum(LAYOUT_MODES);
 export type OverlayLayout = z.infer<typeof layoutSchema>;
 
+const LAYOUT_ALIASES: Record<string, OverlayLayout> = {
+  deneme1: "deneme1",
+  corner: "deneme1",
+  "top-right-stack": "deneme1",
+  "01": "deneme1",
+  deneme2: "deneme2",
+  center: "deneme2",
+  "giant-hud": "deneme2",
+  "02": "deneme2",
+  deneme3: "deneme3",
+  badge: "deneme3",
+  "bang-badge": "deneme3",
+  "03": "deneme3",
+  ticker: "ticker",
+  "bottom-ticker": "ticker",
+  "04": "ticker",
+  bubble: "bubble",
+  "cursor-bubble": "bubble",
+  "05": "bubble",
+  edge: "edge",
+  "edge-strip": "edge",
+  "06": "edge",
+  island: "island",
+  "island-pill": "island",
+  "08": "island",
+};
+
 export function parseLayout(value: string | undefined): OverlayLayout | undefined {
   if (!value) return undefined;
-  const normalized = value.trim().toLowerCase();
-  if (normalized === "deneme1" || normalized === "corner") return "deneme1";
-  if (normalized === "deneme2" || normalized === "center") return "deneme2";
-  if (normalized === "deneme3" || normalized === "badge") return "deneme3";
-  return undefined;
+  return LAYOUT_ALIASES[value.trim().toLowerCase()];
 }
 
 export class GlintError extends Error {
@@ -146,6 +169,8 @@ export interface OverlaySink {
   notice(notice: Notice): void;
   resolved(id: string, result: AskResult): void;
   layoutChanged?(layout: OverlayLayout): void;
+  /** Open the concept picker window. Returns false when there is no UI to open. */
+  openPicker?(): void;
   event?(event: FeedEvent): void;
 }
 

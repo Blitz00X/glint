@@ -4,12 +4,25 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import { parseArgs } from "./args.js";
-import { askUser, daemonStatus, ensureDaemon, getDaemonLayout, getEvents, notifyUser, runDaemonForeground, setDaemonLayout } from "./client.js";
+import {
+  askUser,
+  daemonHealth,
+  daemonStatus,
+  electronBinary,
+  ensureDaemon,
+  getDaemonLayout,
+  getEvents,
+  notifyUser,
+  openPicker,
+  runDaemonForeground,
+  setDaemonLayout,
+} from "./client.js";
+import { renderChecks, runDoctor } from "./doctor.js";
 import { HARNESSES, parseHarness, parseHookEvent, readStdin, runHook } from "./hooks.js";
-import { applyInstall, planInstall, renderPlan } from "./install.js";
+import { applyInstall, planInstall, planUninstall, renderPlan } from "./install.js";
 import { createGlintServer, serveMcpHttp } from "./mcp.js";
 import { packageRoot } from "./paths.js";
-import { formatAskResult, GlintError, parseLayout, type OverlayLayout } from "./protocol.js";
+import { formatAskResult, GlintError, LAYOUT_MODES, parseLayout, type OverlayLayout } from "./protocol.js";
 
 const HELP = `Glint — holographic prompts for AI coding agents
 
@@ -19,7 +32,9 @@ Usage
   glint mcp --http [--port N]     Serve the MCP tools over streamable HTTP
   glint ask <question> [options]  Ask from the shell, like an agent would
   glint notify <message>          Show a notice and return immediately
-  glint layout [deneme1|deneme2|deneme3]  Show or switch the active overlay layout
+  glint pick                      Open the concept picker (alias: glint settings)
+  glint layout [name]             Show or switch the active overlay layout (saved)
+                                  ${LAYOUT_MODES.join(" | ")}
   glint demo [--no-sandbox]       Ring a few sample calls and post to the feed
   glint status                    Print whether the daemon is up
   glint feed [--since N] [--json] Print the group-chat feed (last 100 events)
@@ -29,24 +44,28 @@ Usage
                                   event:   Stop | PreToolUse | notify | session.idle
   glint install <harness> [--write] [--approvals] [--target DIR]
                                   Print (or merge) MCP + hook + rule config
+  glint uninstall <harness> [--write] [--target DIR]
+                                  Print (or apply) the removal of Glint's config
+  glint doctor                    Check the install, daemon, layout and harnesses
 
 ask / notify options
   --choice <text>     Repeat for numbered choices (ask only, max 9)
   --agent <name>      Label on the panel. Default: agent
   --project <name>    Project label. Default: this directory
   --timeout <ms>      Give up after this many milliseconds (ask only)
-  --layout <mode>     Overlay layout: deneme1, deneme2, or deneme3
+  --layout <mode>     Overlay layout for this call only (see glint layout)
   --session <id>      Session id; sets the stable #tag and color
 
 Environment
   GLINT_HOME          State directory. Default: ~/.glint
   GLINT_AGENT         Default agent label
   GLINT_PROJECT       Default project label
-  GLINT_LAYOUT        Default layout: deneme1, deneme2, or deneme3
+  GLINT_LAYOUT        Start layout; when set it wins over the picker's saved choice
   GLINT_HOTKEY        Electron accelerator. Default: CommandOrControl+Shift+G
   GLINT_NO_SANDBOX    Set to 1 if Chromium's sandbox cannot start
   GLINT_MUTE          Set to 1 to silence call sounds
   GLINT_FEED_HOTKEY   Feed toggle accelerator. Default: CommandOrControl+Shift+F
+  GLINT_PICKER_HOTKEY Concept picker accelerator. Default: CommandOrControl+Shift+L
   GLINT_HOOK          Set to 0 to make every hook a no-op
   GLINT_HOOK_TIMEOUT_MS      How long a Stop hook rings. Default: 600000
   GLINT_APPROVAL_TIMEOUT_MS  How long an approval call rings. Default: 120000
@@ -92,6 +111,16 @@ async function main(argv: string[]): Promise<void> {
       return;
     case "install":
       installCommand(args);
+      return;
+    case "uninstall":
+      uninstallCommand(args);
+      return;
+    case "doctor":
+      await doctorCommand();
+      return;
+    case "pick":
+    case "settings":
+      await pickCommand();
       return;
     case "feed":
       await feedCommand(args);
@@ -171,7 +200,7 @@ async function layoutCommand(args: ReturnType<typeof parseArgs>): Promise<void> 
     return;
   }
   const next = parseLayoutOption(raw);
-  if (!next) throw new GlintError(`Invalid layout "${raw}". Expected deneme1, deneme2, or deneme3.`);
+  if (!next) throw new GlintError(`Invalid layout "${raw}". Expected one of: ${LAYOUT_MODES.join(", ")}.`);
   console.log(await setDaemonLayout(next));
 }
 
@@ -265,6 +294,34 @@ function installCommand(args: ReturnType<typeof parseArgs>): void {
   console.log(renderPlan(plan, written));
 }
 
+function uninstallCommand(args: ReturnType<typeof parseArgs>): void {
+  const harness = parseHarness(args.positionals[0]);
+  if (!harness) throw new GlintError(`Usage: glint uninstall <${HARNESSES.join("|")}> [--write] [--target DIR]`);
+  const plan = planUninstall(harness, { target: args.options.get("target") });
+  const written = args.flags.has("write") ? applyInstall(plan) : null;
+  console.log(renderPlan(plan, written).replace(/^# Glint for /, "# Remove Glint from "));
+}
+
+async function doctorCommand(): Promise<void> {
+  const checks = await runDoctor({
+    daemon: () => daemonHealth(),
+    electron: () => {
+      try {
+        return electronBinary();
+      } catch {
+        return null;
+      }
+    },
+  });
+  console.log(renderChecks(checks));
+  if (checks.some((check) => check.level === "fail")) process.exitCode = 1;
+}
+
+async function pickCommand(): Promise<void> {
+  await openPicker();
+  console.error("Opened the Glint concept picker.");
+}
+
 async function feedCommand(args: ReturnType<typeof parseArgs>): Promise<void> {
   const since = Number(args.options.get("since") ?? "0");
   const events = await getEvents(Number.isFinite(since) ? since : 0, { spawn: false });
@@ -308,7 +365,7 @@ function parseTimeout(value: string): number {
 function parseLayoutOption(value: string | undefined): OverlayLayout | undefined {
   if (value === undefined) return undefined;
   const layout = parseLayout(value);
-  if (!layout) throw new GlintError(`Invalid layout "${value}". Expected deneme1, deneme2, or deneme3.`);
+  if (!layout) throw new GlintError(`Invalid layout "${value}". Expected one of: ${LAYOUT_MODES.join(", ")}.`);
   return layout;
 }
 

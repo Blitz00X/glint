@@ -24,8 +24,10 @@ let activeId = null;
 const feedEvents = [];
 const feedSeen = new Set();
 
+const LAYOUTS = ["deneme1", "deneme2", "deneme3", "ticker", "bubble", "edge", "island"];
+
 function isValidLayout(value) {
-  return value === "deneme1" || value === "deneme2" || value === "deneme3";
+  return LAYOUTS.includes(value);
 }
 
 if (!api) {

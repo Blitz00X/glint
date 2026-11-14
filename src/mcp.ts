@@ -38,7 +38,7 @@ const askArgs = z.object({
     .describe("Milliseconds to wait before returning status timeout. Omit to wait until the user answers."),
   layout: layoutSchema
     .optional()
-    .describe("Overlay preset: deneme1 (top-right corner), deneme2 (80% centered), or deneme3 (top-left neon ! badge)."),
+    .describe("Usually omit: the user picks the overlay style with `glint pick`. Forces one layout for this call: deneme1 (top-right), deneme2 (centered HUD), deneme3 (neon ! badge), ticker (bottom strip), bubble (next to the pointer), edge (right edge column), island (top-center pill)."),
 });
 
 const notifyArgs = z.object({
@@ -54,7 +54,7 @@ const notifyArgs = z.object({
     .describe("How long the notice stays visible. Defaults to about 6.5 seconds."),
   layout: layoutSchema
     .optional()
-    .describe("Overlay preset: deneme1 (top-right corner), deneme2 (80% centered), or deneme3 (top-left neon ! badge)."),
+    .describe("Usually omit: the user picks the overlay style with `glint pick`. Forces one layout for this call: deneme1 (top-right), deneme2 (centered HUD), deneme3 (neon ! badge), ticker (bottom strip), bubble (next to the pointer), edge (right edge column), island (top-center pill)."),
 });
 
 const askOutput = z.object({

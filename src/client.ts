@@ -54,6 +54,12 @@ export async function setDaemonLayout(layout: OverlayLayout, options: ClientOpti
   return res.layout;
 }
 
+export async function openPicker(options: ClientOptions = {}): Promise<boolean> {
+  const info = await ensureDaemon(options);
+  const res = await postJson<{ opened: boolean }>(info, "/v1/picker", {}, options.signal);
+  return res.opened === true;
+}
+
 export async function ensureDaemon(options: ClientOptions = {}): Promise<DaemonInfo> {
   const home = glintHome(options.home);
   const existing = await readHealthy(home);
@@ -193,6 +199,22 @@ async function pollHealthy(home: string, timeoutMs: number): Promise<DaemonInfo 
     await delay(150);
   }
   return null;
+}
+
+/** Daemon info plus its live layout and open-call count, or null when it is down. Never starts it. */
+export async function daemonHealth(home = glintHome()): Promise<(DaemonInfo & { layout?: string; pending?: number }) | null> {
+  const info = await readHealthy(home);
+  if (!info) return null;
+  try {
+    const response = await fetch(`http://127.0.0.1:${info.port}/v1/health`, {
+      headers: { authorization: `Bearer ${info.token}` },
+      signal: AbortSignal.timeout(800),
+    });
+    const body = (await response.json()) as { layout?: string; pending?: number };
+    return { ...info, layout: body.layout, pending: body.pending };
+  } catch {
+    return info;
+  }
 }
 
 export async function readHealthy(home: string): Promise<DaemonInfo | null> {

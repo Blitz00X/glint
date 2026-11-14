@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self'; style-src 'self'; script-src 'self'; font-src 'self'" />
+    <title>Glint — concepts</title>
+    <link rel="stylesheet" href="./picker.css" />
+  </head>
+  <body>
+    <header class="top">
+      <div class="title">
+        <span class="brand">GLINT</span>
+        <span class="slash">//</span>
+        <span>INTERFACE CONCEPTS</span>
+      </div>
+      <div class="meta">
+        <span>active <b id="current">…</b></span>
+        <span class="dot">·</span>
+        <span>open with <b id="hotkey">ctrl+shift+l</b> or <b>glint pick</b></span>
+      </div>
+      <button id="close" class="close" type="button" aria-label="Close">✕</button>
+    </header>
+    <p id="env-note" class="env-note" hidden></p>
+    <main id="grid" class="grid" aria-label="Overlay concepts"></main>
+    <footer class="bottom">
+      <span id="status" role="status">Preview rings a sample call in that style. Use this switches every new call to it and saves it to ~/.glint/config.json.</span>
+      <span class="keys">esc closes</span>
+    </footer>
+    <script src="./picker.js"></script>
+  </body>
+</html>

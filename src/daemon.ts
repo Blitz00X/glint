@@ -230,6 +230,16 @@ export async function createDaemon(options: CreateDaemonOptions = {}): Promise<D
       return;
     }
 
+    if (req.method === "POST" && url.pathname === "/v1/picker") {
+      if (!options.sink?.openPicker) {
+        sendJson(res, 501, { error: "this daemon has no picker window" });
+        return;
+      }
+      options.sink.openPicker();
+      sendJson(res, 200, { opened: true });
+      return;
+    }
+
     if (req.method === "GET" && (url.pathname === "/v1/events" || url.pathname === "/v1/feed")) {
       const since = Number(url.searchParams.get("since") ?? "0");
       sendJson(res, 200, { events: events(Number.isFinite(since) ? since : 0), max: maxEvents });

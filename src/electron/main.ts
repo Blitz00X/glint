@@ -1,9 +1,11 @@
 import { app, BrowserWindow, globalShortcut, ipcMain, screen } from "electron";
 import path from "node:path";
 import { createDaemon, type DaemonHandle } from "../daemon.js";
+import { CONCEPTS } from "../concepts.js";
+import { resolveStartLayout, writeConfig } from "../config.js";
 import { createDnd, type DndController } from "../dnd.js";
 import { glintHome, packageRoot, statePath } from "../paths.js";
-import { parseLayout, type OverlayLayout, type SettleInput } from "../protocol.js";
+import { parseLayout, type AskResult, type OverlayLayout, type SettleInput } from "../protocol.js";
 
 // Transparent child windows on Linux composite reliably with these switches,
 // and they have to be set before the app is ready.
@@ -30,7 +32,14 @@ const TOP_OFFSET = Number.isFinite(Number(process.env.GLINT_TOP_OFFSET)) && proc
   ? Number(process.env.GLINT_TOP_OFFSET)
   : process.platform === "linux" ? 168 : 16;
 const MUTED = process.env.GLINT_MUTE === "1";
-const INITIAL_LAYOUT: OverlayLayout = parseLayout(process.env.GLINT_LAYOUT) ?? "deneme1";
+const PICKER_HOTKEY = process.env.GLINT_PICKER_HOTKEY?.trim() || "CommandOrControl+Shift+L";
+// Start layout: explicit GLINT_LAYOUT > picker choice in ~/.glint/config.json > deneme1.
+const START = resolveStartLayout();
+const INITIAL_LAYOUT: OverlayLayout = START.layout;
+const BUBBLE_WIDTH = 420;
+const TICKER_MAX_HEIGHT = 340;
+const EDGE_WIDTH = 400;
+const ISLAND_WIDTH = 640;
 
 let win: BrowserWindow | null = null;
 let daemon: DaemonHandle | null = null;
@@ -41,6 +50,9 @@ let activeLayout: OverlayLayout = INITIAL_LAYOUT;
 let displayLayout: OverlayLayout = INITIAL_LAYOUT;
 let displayCollapsed = false;
 let displayMode: "calls" | "feed" = "calls";
+let pickerWin: BrowserWindow | null = null;
+let bubbleAnchor: { x: number; y: number } | null = null;
+const previewIds = new Set<string>();
 
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
@@ -74,7 +86,17 @@ async function start(): Promise<void> {
       layoutChanged: (layout) => {
         activeLayout = layout;
         displayLayout = layout;
+        bubbleAnchor = null;
         emit("layout", layout);
+        try {
+          writeConfig({ layout });
+        } catch (error) {
+          console.error(`could not save layout: ${error instanceof Error ? error.message : String(error)}`);
+        }
+        if (pickerWin && !pickerWin.isDestroyed()) pickerWin.webContents.send("picker:layout", layout);
+      },
+      openPicker: () => {
+        openPicker();
       },
     },
   });
@@ -82,6 +104,10 @@ async function start(): Promise<void> {
   if (!registered) console.error(`Could not register hotkey ${HOTKEY}`);
   const feedRegistered = globalShortcut.register(FEED_HOTKEY, () => toggleFeed());
   if (!feedRegistered) console.error(`Could not register feed hotkey ${FEED_HOTKEY}`);
+  const pickerRegistered = globalShortcut.register(PICKER_HOTKEY, () => openPicker());
+  if (!pickerRegistered) console.error(`Could not register picker hotkey ${PICKER_HOTKEY}`);
+  registerPickerIpc();
+  if (process.env.GLINT_OPEN_PICKER === "1") openPicker();
   console.error(`glint overlay ready on 127.0.0.1:${daemon.port}  hotkey ${hotkeyLabel(HOTKEY)}`);
 }
 
@@ -145,6 +171,7 @@ function createWindow(): void {
     if (requested <= 0) {
       if (win.isFocused()) win.blur();
       win.hide();
+      bubbleAnchor = null;
       return;
     }
     const next = place(requested, displayLayout, displayCollapsed);
@@ -228,6 +255,33 @@ function place(
     const x = layout === "deneme3" ? area.x + 16 : area.x + area.width - FEED_WIDTH - 16;
     return { x: Math.round(x), y: Math.round(area.y + TOP_OFFSET), width: FEED_WIDTH, height };
   }
+  if (layout === "ticker") {
+    const height = Math.max(1, Math.min(Math.ceil(requestedHeight), TICKER_MAX_HEIGHT, area.height - 16));
+    return {
+      x: Math.round(area.x + 12),
+      y: Math.round(area.y + area.height - height - 8),
+      width: Math.round(area.width - 24),
+      height,
+    };
+  }
+  if (layout === "edge") {
+    const y = area.y + Math.min(TOP_OFFSET, Math.round(area.height / 4));
+    return {
+      x: Math.round(area.x + area.width - EDGE_WIDTH),
+      y: Math.round(y),
+      width: EDGE_WIDTH,
+      height: Math.max(120, Math.round(area.y + area.height - y - 8)),
+    };
+  }
+  if (layout === "island") {
+    const height = Math.max(1, Math.min(Math.ceil(requestedHeight), Math.max(80, area.height - 40)));
+    const width = Math.min(ISLAND_WIDTH, area.width - 32);
+    return { x: Math.round(area.x + (area.width - width) / 2), y: Math.round(area.y + 10), width, height };
+  }
+  if (layout === "bubble") {
+    if (!bubbleAnchor) bubbleAnchor = screen.getCursorScreenPoint();
+    return bubbleBounds(bubbleAnchor, requestedHeight, screen.getDisplayNearestPoint(bubbleAnchor).workArea);
+  }
   if (layout === "deneme2") {
     const bounds = display.bounds;
     const width = Math.round(bounds.width * 0.8);
@@ -260,6 +314,122 @@ function place(
     width: WINDOW_WIDTH,
     height,
   };
+}
+
+function bubbleBounds(
+  anchor: { x: number; y: number },
+  requestedHeight: number,
+  area: { x: number; y: number; width: number; height: number },
+): { x: number; y: number; width: number; height: number } {
+  const width = Math.min(BUBBLE_WIDTH, area.width - 16);
+  const height = Math.max(1, Math.min(Math.ceil(requestedHeight), area.height - 16));
+  const x = Math.min(Math.max(area.x + 8, anchor.x - 22), area.x + area.width - width - 8);
+  let y = anchor.y + 12;
+  if (y + height > area.y + area.height - 8) y = Math.max(area.y + 8, anchor.y - height - 12);
+  return { x: Math.round(x), y: Math.round(y), width, height };
+}
+
+/* ------------------------------------------------------------ concept picker */
+
+function openPicker(): void {
+  if (pickerWin && !pickerWin.isDestroyed()) {
+    pickerWin.show();
+    pickerWin.focus();
+    return;
+  }
+  const root = packageRoot();
+  const area = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea;
+  const width = Math.min(1240, area.width - 40);
+  const height = Math.min(860, area.height - 40);
+  pickerWin = new BrowserWindow({
+    x: Math.round(area.x + (area.width - width) / 2),
+    y: Math.round(area.y + (area.height - height) / 2),
+    width,
+    height,
+    minWidth: 720,
+    minHeight: 480,
+    frame: false,
+    show: false,
+    backgroundColor: "#05080e",
+    title: "Glint — concepts",
+    skipTaskbar: false,
+    webPreferences: {
+      preload: path.join(root, "src/electron/picker-preload.cjs"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      spellcheck: false,
+    },
+  });
+  pickerWin.setMenuBarVisibility(false);
+  pickerWin.once("ready-to-show", () => {
+    pickerWin?.show();
+    pickerWin?.focus();
+  });
+  pickerWin.on("closed", () => {
+    pickerWin = null;
+  });
+  void pickerWin.loadFile(path.join(root, "overlay/picker.html"));
+}
+
+let pickerIpcRegistered = false;
+function registerPickerIpc(): void {
+  if (pickerIpcRegistered) return;
+  pickerIpcRegistered = true;
+  ipcMain.handle("picker:state", () => ({
+    current: daemon?.layout() ?? activeLayout,
+    startSource: START.source,
+    envLayout: process.env.GLINT_LAYOUT?.trim() || null,
+    hotkey: hotkeyLabel(PICKER_HOTKEY),
+    concepts: CONCEPTS,
+  }));
+  ipcMain.handle("picker:use", (_event, raw: unknown) => {
+    const layout = typeof raw === "string" ? parseLayout(raw) : undefined;
+    if (!layout || !daemon) return { ok: false, error: "unknown layout" };
+    return { ok: true, layout: daemon.setLayout(layout) };
+  });
+  ipcMain.handle("picker:preview", async (_event, raw: unknown) => {
+    const layout = typeof raw === "string" ? parseLayout(raw) : undefined;
+    if (!layout || !daemon) return { ok: false, error: "unknown layout" };
+    return previewCall(layout);
+  });
+  ipcMain.on("picker:close", () => {
+    pickerWin?.close();
+  });
+}
+
+/** Ring a sample call in `layout` through the daemon's own HTTP API, like an agent would. */
+async function previewCall(layout: OverlayLayout): Promise<{ ok: boolean; error?: string }> {
+  if (!daemon) return { ok: false, error: "daemon is not ready" };
+  for (const id of previewIds) daemon.settle({ id, status: "dismissed" });
+  previewIds.clear();
+  const concept = CONCEPTS.find((item) => item.layout === layout);
+  const body = {
+    question: `Preview of "${concept?.name ?? layout}". Done with the payments migration — apply it in one step, or expand and contract?`,
+    choices: ["Apply it now", "Expand, then contract", "Not yet"],
+    agent: "Glint preview",
+    project: "concept-picker",
+    session: "glint-picker-preview",
+    timeoutMs: 45_000,
+    layout,
+  };
+  const before = new Set(daemon.pending().map((question) => question.id));
+  const request = fetch(`${daemon.baseUrl}/v1/ask`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${daemon.token}`, "content-type": "application/json" },
+    body: JSON.stringify(body),
+  })
+    .then((res) => res.json() as Promise<AskResult>)
+    .catch(() => null);
+  for (let i = 0; i < 40; i++) {
+    const fresh = daemon.pending().find((question) => !before.has(question.id));
+    if (fresh) {
+      previewIds.add(fresh.id);
+      return { ok: true };
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  return { ok: false, error: "preview call did not ring" };
 }
 
 function hotkeyLabel(accel: string): string {
@@ -302,6 +472,7 @@ process.on("exit", () => {
 });
 
 app.on("window-all-closed", () => {
-  app.quit();
+  // The overlay window lives for the whole session; closing the picker must not quit.
+  if (!win || win.isDestroyed()) app.quit();
 });
 
