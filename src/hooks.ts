@@ -4,6 +4,7 @@ import { harnessName } from "./identity.js";
 import { captureOrigin, defaultOriginDeps } from "./origin.js";
 import { ensureHome, glintHome } from "./paths.js";
 import type { AskInput, AskResult, NotifyInput } from "./protocol.js";
+import { projectLabel } from "./project.js";
 
 /**
  * Layer 2 of Glint: deterministic lifecycle hooks.
@@ -812,7 +813,7 @@ export async function runHook(
   }
   const input = normalizeHookInput(payload);
   const agent = harnessName(harness);
-  const project = path.basename(input.cwd) || "workspace";
+  const project = projectLabel(input.cwd);
   const origin = env.GLINT_ORIGIN === "0" ? undefined : captureOrigin({ cwd: input.cwd, title: lastUserPrompt(payload) }, { ...defaultOriginDeps(), env });
   const identity = {
     agent,

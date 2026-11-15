@@ -2,6 +2,21 @@
 
 Earlier releases are recorded in Git tags (`v0.3.0`, `v0.3.1`).
 
+## Unreleased
+
+### Fixed
+
+- **Focus with a native Wayland app in front:** GNOME refuses to activate an
+  XWayland window while Brave, GNOME Terminal or another native app owns the
+  focus. `glint focus` now sets the X11 input focus directly (`xdotool`, with a
+  `python3`/libX11 fallback), so typing reaches the panel even though the
+  compositor keeps the other window active.
+- **Focus with no live call:** the shortcut opens the group feed instead of
+  silently doing nothing after a notice has expired.
+- **Readable session labels:** the panel never shows a bare UUID. OpenMausBot
+  task workspaces resolve to the bot name (e.g. `Asistan`), and OpenCode passes
+  its session title to the overlay.
+
 ## 0.4.1 — 2026-11-15
 
 ### Added

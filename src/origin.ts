@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { z } from "zod";
+import { projectLabel } from "./project.js";
 
 /**
  * Where a call came from: the folder and branch, the app or terminal, and
@@ -11,6 +12,8 @@ import { z } from "zod";
  */
 export const originSchema = z.object({
   cwd: z.string().max(1_000).optional(),
+  /** Human project label; a bare session UUID is never used. */
+  project: z.string().max(120).optional(),
   branch: z.string().max(200).optional(),
   /** Human name: "GNOME Terminal", "tmux", "VS Code", "Cursor", "Codex Desktop", "Claude Desktop", "kitty"… */
   app: z.string().max(60).optional(),
@@ -189,6 +192,7 @@ export function captureOrigin(opts: { cwd?: string; title?: string } = {}, deps:
     const cwd = opts.cwd || deps.cwd;
     if (cwd) {
       origin.cwd = cwd.slice(0, 1_000);
+      origin.project = projectLabel(cwd, undefined, env).slice(0, 120);
       const branch = deps.branch(cwd);
       if (branch) origin.branch = branch.slice(0, 200);
     }
@@ -287,7 +291,7 @@ export function captureOrigin(opts: { cwd?: string; title?: string } = {}, deps:
 export function originLine(origin: Origin | undefined): string {
   if (!origin) return "";
   const parts: string[] = [];
-  if (origin.cwd) parts.push(`${path.basename(origin.cwd) || origin.cwd}${origin.branch ? ` ⎇ ${origin.branch}` : ""}`);
+  if (origin.cwd) parts.push(`${origin.project || path.basename(origin.cwd) || origin.cwd}${origin.branch ? ` ⎇ ${origin.branch}` : ""}`);
   if (origin.app) parts.push(origin.tmux?.target ? `${origin.app} ${origin.tmux.target}` : origin.app);
   if (origin.tty && origin.kind !== "desktop") parts.push(origin.tty);
   return parts.join(" · ");

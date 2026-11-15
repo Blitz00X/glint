@@ -1,4 +1,5 @@
 import { app, BrowserWindow, clipboard, globalShortcut, ipcMain, screen } from "electron";
+import { execFile } from "node:child_process";
 import { defaultJumpDeps, jumpTo } from "../jump.js";
 import path from "node:path";
 import { createDaemon, type DaemonHandle } from "../daemon.js";
@@ -44,6 +45,7 @@ const EDGE_WIDTH = 400;
 const ISLAND_WIDTH = 640;
 
 let win: BrowserWindow | null = null;
+let lastX11Focus = 0;
 let daemon: DaemonHandle | null = null;
 let dnd: DndController | null = null;
 const pendingIpc: Array<{ channel: string; payload: unknown }> = [];
@@ -205,6 +207,8 @@ function createWindow(): void {
     if (!win || win.isDestroyed()) return;
     win.setFocusable(true);
     win.focus();
+    win.webContents.focus();
+    focusX11Input();
   });
 
   screen.on("display-metrics-changed", () => {
@@ -248,11 +252,65 @@ function toggleFeed(): void {
 }
 
 function focusLatest(): void {
-  if (!win || win.isDestroyed() || !win.isVisible()) return;
-  win.setFocusable(true);
+  if (!win || win.isDestroyed()) return;
+  const hasCall = (daemon?.pending().length ?? 0) > 0;
+  const hasFeed = (daemon?.events().length ?? 0) > 0;
+  // Nothing to show: never grab the keyboard for an empty, hidden window.
+  if (!hasCall && !hasFeed) return;
+  // Do not return when the window is hidden: the renderer opens the feed for
+  // a focus request with no live panel, so the shortcut always has an effect.
+  win.setAlwaysOnTop(true, "screen-saver");
   win.show();
+  win.moveTop();
+  win.setFocusable(true);
   win.focus();
+  win.webContents.focus();
   win.webContents.send("focus-latest");
+  // Give the renderer a moment to open the feed or a panel; only a visible
+  // window may take the X11 input focus.
+  setTimeout(() => {
+    if (win && !win.isDestroyed() && win.isVisible()) focusX11Input();
+  }, 120);
+}
+
+/**
+ * GNOME Wayland refuses to activate an XWayland window while a native
+ * Wayland app (Brave, GNOME Terminal, a native editor) owns the focus: the
+ * window gets _NET_WM_STATE_DEMANDS_ATTENTION instead, and win.focus() is a
+ * no-op. XSetInputFocus still routes the keyboard to the window, so the
+ * person can type without the compositor activating it first.
+ */
+function focusX11Input(): void {
+  if (process.platform !== "linux" || !win || win.isDestroyed() || !win.isVisible()) return;
+  const now = Date.now();
+  if (now - lastX11Focus < 150) return;
+  lastX11Focus = now;
+  let id: number | null = null;
+  try {
+    const handle = win.getNativeWindowHandle();
+    if (handle.length >= 4) id = handle.readUInt32LE(0);
+  } catch {
+    id = null;
+  }
+  if (!id) return;
+  execFile("xdotool", ["windowfocus", String(id)], (error) => {
+    if (!error) return;
+    // A stock Ubuntu desktop does not ship xdotool; Python 3 and libX11 do.
+    // XSetInputFocus(RevertToParent, CurrentTime) is enough to route the
+    // keyboard to a visible XWayland window the compositor will not activate.
+    const script = [
+      "import ctypes,sys",
+      'x=ctypes.CDLL("libX11.so.6")',
+      "x.XOpenDisplay.restype=ctypes.c_void_p",
+      "d=x.XOpenDisplay(None)",
+      "if not d: sys.exit(3)",
+      "x.XSetInputFocus(ctypes.c_void_p(d), ctypes.c_ulong(int(sys.argv[1])), 2, 0)",
+      "x.XFlush(ctypes.c_void_p(d))",
+    ].join("\n");
+    execFile("python3", ["-c", script, String(id)], (fallbackError) => {
+      if (fallbackError) console.error(`focus: could not set X11 input focus (xdotool: ${error.message}; python3: ${fallbackError.message})`);
+    });
+  });
 }
 
 function place(

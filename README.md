@@ -191,7 +191,12 @@ Shortcut: Ctrl+Shift+G
 ```
 
 `glint focus` uses the daemon's local token, so it works from a normal user
-session. The Electron shortcut remains useful on X11/XWayland.
+session. The Electron shortcut remains useful on X11/XWayland. When GNOME
+refuses to activate the XWayland panel because a native Wayland app is focused,
+Glint also sets the X11 input focus directly (`xdotool windowfocus`, falling
+back to `python3` + libX11), so typing reaches the panel anyway. With no live
+call, the shortcut opens the group feed instead of doing nothing. `xdotool` is
+optional; install it for the fastest path (`sudo apt install xdotool`).
 
 ## Environment variables
 

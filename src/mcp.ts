@@ -1,10 +1,10 @@
 import { createMcpHandler, McpServer } from "@modelcontextprotocol/server";
 import { localhostHostValidation, localhostOriginValidation, toNodeHandler } from "@modelcontextprotocol/node";
 import { createServer, type Server } from "node:http";
-import path from "node:path";
 import { z } from "zod";
 import { askUser, notifyUser, type ClientOptions } from "./client.js";
 import { captureOrigin, type Origin } from "./origin.js";
+import { projectLabel } from "./project.js";
 import {
   formatAskResult,
   formatNotifyResult,
@@ -253,9 +253,7 @@ function inferAgent(): string {
 }
 
 function inferProject(): string {
-  if (process.env.GLINT_PROJECT?.trim()) return process.env.GLINT_PROJECT.trim();
-  const base = path.basename(process.cwd());
-  return base && base !== "/" ? base : "workspace";
+  return projectLabel(process.cwd(), process.env.GLINT_PROJECT);
 }
 
 function clip(value: string, max: number): string {

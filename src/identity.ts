@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type { Origin } from "./origin.js";
+import { projectLabel } from "./project.js";
 
 /**
  * Caller identity shown on a Glint call and in the feed.
@@ -113,15 +114,19 @@ export interface CallerInput {
 export function callerFor(input: CallerInput): Caller {
   const harness = (input.harness?.trim() || harnessFromAgent(input.agent)).toLowerCase();
   const name = input.agent?.trim() || harnessName(harness) || "agent";
-  const project = input.project?.trim() ?? "";
+  const project = input.project?.trim() ? projectLabel(input.cwd, input.project) : input.cwd?.trim() ? projectLabel(input.cwd) : "";
   const where = input.cwd?.trim() || project;
   const session = input.session?.trim() || `${name}@${where}`;
+  // Older MCP servers captured an origin before project labels existed; fill
+  // it here so the panel never shows a bare UUID to the person.
+  const origin = input.origin ? { ...input.origin } : undefined;
+  if (origin && !origin.project && origin.cwd) origin.project = projectLabel(origin.cwd).slice(0, 120);
   return {
     name,
     project,
     tag: sessionTag(harness, where, session),
     color: sessionColor(harness, where, session),
     harness,
-    ...(input.origin && Object.keys(input.origin).length > 0 ? { origin: input.origin } : {}),
+    ...(origin && Object.keys(origin).length > 0 ? { origin } : {}),
   };
 }

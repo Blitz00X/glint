@@ -111,7 +111,7 @@ function baseName(dir) {
 function originText(origin) {
   if (!origin) return "";
   const parts = [];
-  if (origin.cwd) parts.push(`${baseName(origin.cwd)}${origin.branch ? ` ⎇ ${origin.branch}` : ""}`);
+  if (origin.cwd) parts.push(`${origin.project || baseName(origin.cwd)}${origin.branch ? ` ⎇ ${origin.branch}` : ""}`);
   if (origin.app) parts.push(origin.tmux && origin.tmux.target ? `${origin.app} ${origin.tmux.target}` : origin.app);
   if (origin.tty && origin.kind !== "desktop") parts.push(origin.tty);
   return parts.join("  ·  ");
@@ -585,7 +585,10 @@ function addNotice(notice) {
   hintRight.append(feedKey);
   hint.append(hintLeft, hintRight);
 
-  panel.append(sweep(), ...corners(), header(caller, true), copy, hint, meter);
+  panel.append(sweep(), ...corners(), header(caller, true));
+  const origin = originBlock(caller.origin);
+  if (origin) panel.append(origin);
+  panel.append(copy, hint, meter);
   panel.addEventListener("mousedown", () => api.focusWindow());
   panel.addEventListener("click", () => removePanel(notice.id));
   panel.addEventListener("keydown", (event) => {
@@ -693,7 +696,16 @@ function jumpActive() {
 
 function focusLatest() {
   const panel = activePanel();
-  if (!panel) return;
+  if (!panel) {
+    // A notice is gone after a few seconds and a call may already be answered.
+    // The shortcut should still do something visible instead of dying silently:
+    // open the feed, which keeps the recent calls and answers.
+    if (feedEvents.length > 0) {
+      setFeedOpen(true);
+      api.focusWindow();
+    }
+    return;
+  }
   if (document.body.dataset.layout === "deneme3" && !badgeExpanded) {
     expandBadge(false);
   }
