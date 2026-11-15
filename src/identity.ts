@@ -120,7 +120,13 @@ export function callerFor(input: CallerInput): Caller {
   // Older MCP servers captured an origin before project labels existed; fill
   // it here so the panel never shows a bare UUID to the person.
   const origin = input.origin ? { ...input.origin } : undefined;
-  if (origin && !origin.project && origin.cwd) origin.project = projectLabel(origin.cwd).slice(0, 120);
+  if (origin) {
+    if (!origin.project && origin.cwd) origin.project = projectLabel(origin.cwd).slice(0, 120);
+    // Older MCP servers send the session at the top level only; keep it on the
+    // origin so "go to terminal" can reopen the same harness session.
+    if (!origin.harness) origin.harness = harness;
+    if (!origin.session && input.session?.trim()) origin.session = input.session.trim().slice(0, 200);
+  }
   return {
     name,
     project,
