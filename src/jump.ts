@@ -36,6 +36,19 @@ export function defaultJumpDeps(copy?: (text: string) => void): JumpDeps {
   };
 }
 
+/** No window to raise (an app-managed session): open a terminal at the folder. */
+async function openTerminal(cwd: string, deps: JumpDeps): Promise<boolean> {
+  const attempts: Array<[string, string[]]> = [
+    ["gnome-terminal", [`--working-directory=${cwd}`]],
+    ["kgx", ["--working-directory", cwd]],
+    ["ptyxis", ["--new-window", "--working-directory", cwd]],
+  ];
+  for (const [cmd, args] of attempts) {
+    if ((await deps.run(cmd, args)).ok) return true;
+  }
+  return false;
+}
+
 async function x11ActivatePid(pid: number, deps: JumpDeps): Promise<boolean> {
   // wmctrl -lp lists managed (mapped, top-level) X11 windows with their pid.
   const list = await deps.run("wmctrl", ["-lp"]);
@@ -105,6 +118,16 @@ export async function jumpTo(raw: unknown, deps: JumpDeps): Promise<JumpResult> 
   }
 
   if (paneSelected) return { ok: true, method: "tmux", message: "tmux pane selected (raise its terminal yourself)", tried };
+
+  // App-managed sessions (OpenMausBot, a server, a container) have a cwd but
+  // no terminal window to raise. Open one at the folder instead of only
+  // copying a cd command the person may never see.
+  if (origin.cwd && origin.kind !== "desktop" && origin.kind !== "vscode") {
+    tried.push("terminal");
+    if (await openTerminal(origin.cwd, deps)) {
+      return { ok: true, method: "terminal", message: `opened a terminal in ${origin.project || origin.cwd}`, tried };
+    }
+  }
 
   const where = [origin.cwd, origin.tty].filter(Boolean).join(" · ");
   if (origin.cwd && deps.copy) {

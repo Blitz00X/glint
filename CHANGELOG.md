@@ -16,6 +16,10 @@ Earlier releases are recorded in Git tags (`v0.3.0`, `v0.3.1`).
 - **Readable session labels:** the panel never shows a bare UUID. OpenMausBot
   task workspaces resolve to the bot name (e.g. `Asistan`), and OpenCode passes
   its session title to the overlay.
+- **Go to terminal with no terminal window:** sessions managed by an app or a
+  server have a folder but no window to raise. The button now opens a terminal
+  at that folder (GNOME Terminal, kgx or Ptyxis) instead of only copying a `cd`
+  command.
 
 ## 0.4.1 — 2026-11-15
 
