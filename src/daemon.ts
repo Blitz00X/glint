@@ -37,6 +37,8 @@ export interface DaemonHandle {
   /** Feed history, oldest first. Pass `since` to get only newer events. */
   events(since?: number): FeedEvent[];
   settle(input: SettleInput): { ok: true; result: AskResult } | { ok: false; error: string; status: number };
+  /** Ask the overlay to focus the newest panel. */
+  focus(): void;
   close(): Promise<void>;
 }
 
@@ -251,6 +253,16 @@ export async function createDaemon(options: CreateDaemonOptions = {}): Promise<D
       return;
     }
 
+    if (req.method === "POST" && url.pathname === "/v1/focus") {
+      try {
+        options.sink?.focus?.();
+      } catch (error) {
+        log(`overlay focus sink failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+      sendJson(res, 200, { ok: true });
+      return;
+    }
+
     if (req.method === "POST" && url.pathname === "/v1/answer") {
       const body = parseSettleInput(await readJson(req));
       const result = settle(body);
@@ -387,6 +399,13 @@ export async function createDaemon(options: CreateDaemonOptions = {}): Promise<D
     pending: () => [...asks.values()].map((pending) => pending.question),
     events,
     settle,
+    focus() {
+      try {
+        options.sink?.focus?.();
+      } catch (error) {
+        log(`overlay focus sink failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
     async close() {
       for (const id of [...asks.keys()]) {
         finish(id, {

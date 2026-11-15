@@ -176,6 +176,23 @@ Every call carries its origin, captured by the MCP server or hook process (which
 | Ctrl+Shift+L | Open the concept picker. `GLINT_PICKER_HOTKEY` overrides. |
 | Ctrl+Shift+J | Jump to where the active call came from. `GLINT_JUMP_HOTKEY` overrides. |
 
+### GNOME Wayland focus
+
+Electron's `globalShortcut` is an X11 grab. On GNOME Wayland it only receives a
+key while an XWayland window has focus; when a native Wayland app (GNOME
+Terminal, Firefox, a native editor) is focused, `Ctrl+Shift+G` never reaches
+Glint. `glint focus` asks the running daemon to focus the newest panel instead.
+Bind it in **Settings → Keyboard → Keyboard Shortcuts → Custom Shortcuts**:
+
+```text
+Name:    Glint focus
+Command: glint focus
+Shortcut: Ctrl+Shift+G
+```
+
+`glint focus` uses the daemon's local token, so it works from a normal user
+session. The Electron shortcut remains useful on X11/XWayland.
+
 ## Environment variables
 
 | Variable | Default | Effect |

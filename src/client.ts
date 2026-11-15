@@ -32,6 +32,12 @@ export async function notifyUser(input: NotifyInput, options: ClientOptions = {}
   return postJson<NotifyResult>(info, "/v1/notify", input, options.signal);
 }
 
+/** Ask the running overlay to focus the newest panel (Wayland-friendly). */
+export async function focusOverlay(options: ClientOptions = {}): Promise<void> {
+  const info = await ensureDaemon(options);
+  await postJson(info, "/v1/focus", {}, options.signal);
+}
+
 export async function getEvents(since = 0, options: ClientOptions = {}): Promise<FeedEvent[]> {
   const info = await ensureDaemon(options);
   const res = await requestJson<{ events: FeedEvent[] }>(info, "GET", `/v1/events?since=${since}`, undefined, options.signal);

@@ -84,6 +84,7 @@ async function start(): Promise<void> {
       question: (question) => emit("question", question),
       notice: (notice) => emit("notice", notice),
       resolved: (id, result) => emit("resolved", { id, result }),
+      focus: () => focusLatest(),
       event: (event) => emit("event", event),
       layoutChanged: (layout) => {
         activeLayout = layout;

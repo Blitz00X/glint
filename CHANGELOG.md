@@ -2,6 +2,19 @@
 
 Earlier releases are recorded in Git tags (`v0.3.0`, `v0.3.1`).
 
+## 0.4.1 — 2026-11-15
+
+### Added
+
+- **`glint focus`:** asks the running daemon to focus the newest panel. This is
+  the reliable focus path on GNOME Wayland, where Electron's X11 global
+  shortcut does not receive keys while a native Wayland app is focused.
+- Daemon `POST /v1/focus` endpoint and overlay focus sink.
+
+### Changed
+
+- README documents the GNOME Wayland custom shortcut.
+
 ## 0.4.0 — 2026-11-15
 
 ### Added

@@ -174,6 +174,8 @@ export interface OverlaySink {
   layoutChanged?(layout: OverlayLayout): void;
   /** Open the concept picker window. Returns false when there is no UI to open. */
   openPicker?(): void;
+  /** Focus the newest panel. Used by `glint focus` from a Wayland keybinding. */
+  focus?(): void;
   event?(event: FeedEvent): void;
 }
 

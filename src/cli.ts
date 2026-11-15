@@ -10,6 +10,7 @@ import {
   daemonStatus,
   electronBinary,
   ensureDaemon,
+  focusOverlay,
   getDaemonLayout,
   getEvents,
   notifyUser,
@@ -32,6 +33,7 @@ Usage
   glint mcp --http [--port N]     Serve the MCP tools over streamable HTTP
   glint ask <question> [options]  Ask from the shell, like an agent would
   glint notify <message>          Show a notice and return immediately
+  glint focus                     Focus the newest panel (use for a Wayland keybinding)
   glint pick                      Open the concept picker (alias: glint settings)
   glint layout [name]             Show or switch the active overlay layout (saved)
                                   ${LAYOUT_MODES.join(" | ")}
@@ -107,6 +109,10 @@ async function main(argv: string[]): Promise<void> {
       return;
     case "status":
       await statusCommand();
+      return;
+    case "focus":
+      await focusOverlay();
+      console.log("focused the newest Glint panel");
       return;
     case "hook":
       await hookCommand(args);
