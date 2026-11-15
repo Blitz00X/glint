@@ -37,6 +37,12 @@ contextBridge.exposeInMainWorld("glint", {
   resize(height, layout, collapsed, mode) {
     ipcRenderer.send("resize", height, layout, collapsed, mode);
   },
+  jump(origin) {
+    return ipcRenderer.invoke("jump", origin);
+  },
+  onJumpActive(callback) {
+    ipcRenderer.on("jump-active", () => callback());
+  },
   focusWindow() {
     ipcRenderer.send("focus-window");
   },

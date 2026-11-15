@@ -4,6 +4,7 @@ import { createServer, type Server } from "node:http";
 import path from "node:path";
 import { z } from "zod";
 import { askUser, notifyUser, type ClientOptions } from "./client.js";
+import { captureOrigin, type Origin } from "./origin.js";
 import {
   formatAskResult,
   formatNotifyResult,
@@ -13,7 +14,11 @@ import {
   type NotifyResult,
 } from "./protocol.js";
 
-const VERSION = "0.2.0";
+const VERSION = "0.4.0";
+
+/** Sent to the client at initialize; apps without a rules file (Claude Desktop chat) still get the rule. */
+export const SERVER_INSTRUCTIONS =
+  "The user is not watching this chat or terminal. Never ask them anything in plain text: always call ask_user (with 2-4 short choices when you can) and continue with the answer. When you finish or get blocked, call ask_user with a one-line summary and the open issues. Use notify for FYI updates.";
 
 export interface GlintServerOptions extends ClientOptions {
   agent?: string;
@@ -71,7 +76,7 @@ const notifyOutput = z.object({
 });
 
 export function createGlintServer(options: GlintServerOptions = {}): McpServer {
-  const server = new McpServer({ name: "glint", version: VERSION });
+  const server = new McpServer({ name: "glint", version: VERSION }, { instructions: SERVER_INSTRUCTIONS });
   const clientOptions: ClientOptions = {
     home: options.home,
     spawn: options.spawn,
@@ -224,7 +229,7 @@ function inferHarness(): string {
  * MCP gives a server no session id, but a stdio server lives exactly as long
  * as its agent session, so the parent pid is a good stand-in.
  */
-function sessionFields(): { session: string; harness: string; cwd: string } {
+function sessionFields(): { session: string; harness: string; cwd: string; origin?: Origin } {
   const env = process.env;
   const session =
     env.GLINT_SESSION?.trim() ||
@@ -232,7 +237,8 @@ function sessionFields(): { session: string; harness: string; cwd: string } {
     env.CLAUDE_SESSION_ID?.trim() ||
     env.OPENCODE_SESSION_ID?.trim() ||
     `mcp-${process.ppid}`;
-  return { session: session.slice(0, 200), harness: inferHarness(), cwd: process.cwd() };
+  const origin = process.env.GLINT_ORIGIN === "0" ? undefined : captureOrigin({ cwd: process.cwd(), title: env.GLINT_TITLE });
+  return { session: session.slice(0, 200), harness: inferHarness(), cwd: process.cwd(), ...(origin ? { origin } : {}) };
 }
 
 function inferAgent(): string {
@@ -242,6 +248,7 @@ function inferAgent(): string {
   if (env.CODEX_SANDBOX || env.CODEX_THREAD_ID) return "Codex";
   if (env.OPENCODE || env.OPENCODE_SESSION_ID) return "OpenCode";
   if (env.CURSOR_AGENT || env.CURSOR_TRACE_ID) return "Cursor";
+  if (env.GLINT_HARNESS === "claude-desktop") return "Claude Desktop";
   return "agent";
 }
 

@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import type { Origin } from "./origin.js";
 
 /**
  * Caller identity shown on a Glint call and in the feed.
@@ -16,6 +17,8 @@ export interface Caller {
   color: string;
   /** Harness id when known: claude, codex, agy, opencode, mcp, cli. */
   harness: string;
+  /** Where the call came from (folder, branch, terminal/app) and how to jump back. */
+  origin?: Origin;
 }
 
 /**
@@ -62,6 +65,10 @@ export function harnessName(harness: string | undefined): string {
     case "claude":
     case "claude-code":
       return "Claude Code";
+    case "claude-desktop":
+      return "Claude Desktop";
+    case "codex-desktop":
+      return "Codex Desktop";
     case "codex":
       return "Codex";
     case "agy":
@@ -96,6 +103,7 @@ export interface CallerInput {
   harness?: string;
   /** Full working directory when known; hashed instead of the project label. */
   cwd?: string;
+  origin?: Origin;
 }
 
 /**
@@ -114,5 +122,6 @@ export function callerFor(input: CallerInput): Caller {
     tag: sessionTag(harness, where, session),
     color: sessionColor(harness, where, session),
     harness,
+    ...(input.origin && Object.keys(input.origin).length > 0 ? { origin: input.origin } : {}),
   };
 }

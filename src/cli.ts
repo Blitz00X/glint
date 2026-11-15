@@ -19,7 +19,7 @@ import {
 } from "./client.js";
 import { renderChecks, runDoctor } from "./doctor.js";
 import { HARNESSES, parseHarness, parseHookEvent, readStdin, runHook } from "./hooks.js";
-import { applyInstall, planInstall, planUninstall, renderPlan } from "./install.js";
+import { applyInstall, INSTALL_TARGETS, parseInstallTarget, planInstall, planUninstall, renderPlan } from "./install.js";
 import { createGlintServer, serveMcpHttp } from "./mcp.js";
 import { packageRoot } from "./paths.js";
 import { formatAskResult, GlintError, LAYOUT_MODES, parseLayout, type OverlayLayout } from "./protocol.js";
@@ -44,6 +44,8 @@ Usage
                                   event:   Stop | PreToolUse | notify | session.idle
   glint install <harness> [--write] [--approvals] [--target DIR]
                                   Print (or merge) MCP + hook + rule config
+                                  harness: claude | codex | agy | opencode |
+                                           codex-desktop | claude-desktop
   glint uninstall <harness> [--write] [--target DIR]
                                   Print (or apply) the removal of Glint's config
   glint doctor                    Check the install, daemon, layout and harnesses
@@ -283,8 +285,8 @@ async function hookCommand(args: ReturnType<typeof parseArgs>): Promise<void> {
 }
 
 function installCommand(args: ReturnType<typeof parseArgs>): void {
-  const harness = parseHarness(args.positionals[0]);
-  if (!harness) throw new GlintError(`Usage: glint install <${HARNESSES.join("|")}> [--write] [--approvals] [--target DIR]`);
+  const harness = parseInstallTarget(args.positionals[0]);
+  if (!harness) throw new GlintError(`Usage: glint install <${INSTALL_TARGETS.join("|")}> [--write] [--approvals] [--target DIR]`);
   const plan = planInstall(harness, {
     write: args.flags.has("write"),
     approvals: args.flags.has("approvals"),
@@ -295,8 +297,8 @@ function installCommand(args: ReturnType<typeof parseArgs>): void {
 }
 
 function uninstallCommand(args: ReturnType<typeof parseArgs>): void {
-  const harness = parseHarness(args.positionals[0]);
-  if (!harness) throw new GlintError(`Usage: glint uninstall <${HARNESSES.join("|")}> [--write] [--target DIR]`);
+  const harness = parseInstallTarget(args.positionals[0]);
+  if (!harness) throw new GlintError(`Usage: glint uninstall <${INSTALL_TARGETS.join("|")}> [--write] [--target DIR]`);
   const plan = planUninstall(harness, { target: args.options.get("target") });
   const written = args.flags.has("write") ? applyInstall(plan) : null;
   console.log(renderPlan(plan, written).replace(/^# Glint for /, "# Remove Glint from "));

@@ -1,4 +1,5 @@
-import { app, BrowserWindow, globalShortcut, ipcMain, screen } from "electron";
+import { app, BrowserWindow, clipboard, globalShortcut, ipcMain, screen } from "electron";
+import { defaultJumpDeps, jumpTo } from "../jump.js";
 import path from "node:path";
 import { createDaemon, type DaemonHandle } from "../daemon.js";
 import { CONCEPTS } from "../concepts.js";
@@ -25,6 +26,7 @@ const WINDOW_WIDTH = 476;
 const BADGE_SIZE = 84;
 const HOTKEY = process.env.GLINT_HOTKEY?.trim() || "CommandOrControl+Shift+G";
 const FEED_HOTKEY = process.env.GLINT_FEED_HOTKEY?.trim() || "CommandOrControl+Shift+F";
+const JUMP_HOTKEY = process.env.GLINT_JUMP_HOTKEY?.trim() || "CommandOrControl+Shift+J";
 const FEED_WIDTH = 520;
 // GNOME/Ubuntu notification banners drop from the top bar and can be ~150px
 // tall; start panels below that zone. GLINT_TOP_OFFSET overrides (pixels).
@@ -104,6 +106,8 @@ async function start(): Promise<void> {
   if (!registered) console.error(`Could not register hotkey ${HOTKEY}`);
   const feedRegistered = globalShortcut.register(FEED_HOTKEY, () => toggleFeed());
   if (!feedRegistered) console.error(`Could not register feed hotkey ${FEED_HOTKEY}`);
+  const jumpRegistered = globalShortcut.register(JUMP_HOTKEY, () => emit("jump-active", null));
+  if (!jumpRegistered) console.error(`Could not register jump hotkey ${JUMP_HOTKEY}`);
   const pickerRegistered = globalShortcut.register(PICKER_HOTKEY, () => openPicker());
   if (!pickerRegistered) console.error(`Could not register picker hotkey ${PICKER_HOTKEY}`);
   registerPickerIpc();
@@ -147,6 +151,7 @@ function createWindow(): void {
     win?.webContents.send("config", {
       hotkeyLabel: hotkeyLabel(HOTKEY),
       feedHotkeyLabel: hotkeyLabel(FEED_HOTKEY),
+      jumpHotkeyLabel: hotkeyLabel(JUMP_HOTKEY),
       layout: daemon?.layout() ?? activeLayout,
       mute: MUTED,
       openFeed: process.env.GLINT_OPEN_FEED === "1",
@@ -187,6 +192,12 @@ function createWindow(): void {
   ipcMain.handle("answer", (_event, body: SettleInput) => {
     if (!daemon) return { ok: false, error: "daemon is not ready" };
     return daemon.settle(body);
+  });
+
+  ipcMain.handle("jump", async (_event, origin: unknown) => {
+    const result = await jumpTo(origin, defaultJumpDeps((text) => clipboard.writeText(text)));
+    console.error(`jump: ${result.method} ok=${result.ok} tried=${result.tried.join(",")}`);
+    return result;
   });
 
   ipcMain.on("focus-window", () => {

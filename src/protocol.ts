@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { Caller } from "./identity.js";
+import { originSchema } from "./origin.js";
 
 export type { Caller } from "./identity.js";
 
@@ -68,6 +69,7 @@ export const askInputSchema = z.object({
   session: z.string().trim().min(1).max(200).optional(),
   harness: z.string().trim().min(1).max(40).optional(),
   cwd: z.string().trim().min(1).max(1_000).optional(),
+  origin: originSchema.optional(),
   kind: callKindSchema.optional(),
 });
 
@@ -82,6 +84,7 @@ export const notifyInputSchema = z.object({
   session: z.string().trim().min(1).max(200).optional(),
   harness: z.string().trim().min(1).max(40).optional(),
   cwd: z.string().trim().min(1).max(1_000).optional(),
+  origin: originSchema.optional(),
 });
 
 export type NotifyInput = z.infer<typeof notifyInputSchema>;

@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { configPath, readConfig, resolveStartLayout } from "./config.js";
 import { HARNESSES, type Harness } from "./hooks.js";
+import { claudeDesktopConfigPath } from "./install.js";
 import { glintHome } from "./paths.js";
 import type { DaemonInfo } from "./protocol.js";
 
@@ -137,7 +138,37 @@ export async function runDoctor(deps: DoctorDeps = {}): Promise<Check[]> {
     add(all ? "ok" : none ? "info" : "warn", harness, `${parts.join(", ")}${none ? ` (run: glint install ${harness} --write)` : all ? "" : ` (partial; rerun glint install ${harness} --write)`}`);
     if (harness === "codex" && status.hook) add("info", "codex trust", "Codex runs hooks.json hooks only after you trust them once with /hooks in the Codex TUI");
   }
+  for (const check of desktopChecks(home, env)) add(check.level, check.label, check.detail);
+  if (process.platform === "linux") {
+    const tools = ["wmctrl", "xdotool", "gdbus", "tmux"].filter((tool) => run("sh", ["-c", `command -v ${tool}`]) != null);
+    add(tools.includes("gdbus") ? "ok" : "info", "jump", `go-to-source helpers found: ${tools.join(", ") || "none"} (GNOME Terminal tabs need gdbus; X11/XWayland windows need wmctrl or xdotool)`);
+  }
   return checks;
+}
+
+/** Codex desktop (shares ~/.codex) and Claude Desktop (claude_desktop_config.json). */
+export function desktopChecks(home: string, env: NodeJS.ProcessEnv = process.env): Check[] {
+  const out: Check[] = [];
+  const codexApp = ["/usr/lib/chatgpt", "/opt/ChatGPT", "/Applications/ChatGPT.app", "/Applications/Codex.app", path.join(home, ".config", "Codex")].some((p) => fs.existsSync(p));
+  if (codexApp) {
+    const status = harnessStatus("codex", home);
+    out.push({
+      level: status.mcp && status.hook && status.rule ? "ok" : "warn",
+      label: "codex-desktop",
+      detail: `uses ~/.codex like the CLI: mcp ${status.mcp ? "yes" : "no"}, hook ${status.hook ? "yes" : "no"}, rule ${status.rule ? "yes" : "no"}${status.mcp && status.hook && status.rule ? "" : " (run: glint install codex-desktop --write)"}`,
+    });
+  }
+  const file = claudeDesktopConfigPath(home, process.platform, env);
+  const text = read(file);
+  if (text != null || fs.existsSync(path.dirname(file))) {
+    const mcp = text != null && /"glint"\s*:\s*\{/.test(text);
+    out.push({
+      level: mcp ? "ok" : "info",
+      label: "claude-desktop",
+      detail: mcp ? "mcp yes (chat: ask_user/notify; no hooks in chat; the Code tab uses ~/.claude)" : "mcp no (run: glint install claude-desktop --write, then reopen Claude Desktop)",
+    });
+  }
+  return out;
 }
 
 export function renderChecks(checks: Check[]): string {

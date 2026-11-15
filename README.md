@@ -66,6 +66,8 @@ node dist/cli.js install claude   --write
 node dist/cli.js install codex    --write
 node dist/cli.js install agy      --write
 node dist/cli.js install opencode --write
+node dist/cli.js install claude-desktop --write   # Claude Desktop chat (MCP only)
+node dist/cli.js install codex-desktop  --write   # same files as codex
 ```
 
 Options: `--approvals` also routes PreToolUse permission prompts through Glint; `--target DIR` writes project-level config instead.
@@ -80,6 +82,15 @@ Backups are timestamped, `<file>.glint-backup-YYYYMMDD-HHMMSS`, so running insta
 | Codex CLI | `~/.codex/config.toml` → `[mcp_servers.glint]` | `~/.codex/hooks.json` → `Stop` (+ `notify` in config.toml) | `~/.codex/AGENTS.md` |
 | Antigravity (`agy`) | `~/.gemini/config/mcp_config.json` | `~/.gemini/config/hooks.json` → `glint.Stop` | `~/.gemini/config/AGENTS.md` |
 | OpenCode | `opencode.jsonc` → `mcp.glint` | plugin `~/.config/opencode/plugin/glint.js` | `~/.config/opencode/AGENTS.md` |
+
+Desktop apps:
+
+| app | what `glint install` does | what works |
+|---|---|---|
+| Codex desktop (`codex-desktop`) | nothing extra: the app runs the same Codex core (`codex app-server`) and reads `~/.codex`, so `install codex` already covers it | MCP `ask_user`/`notify`, the Stop hook (plain-text questions become calls), AGENTS.md rule; calls are labelled **Codex Desktop** |
+| Claude Desktop (`claude-desktop`) | adds `mcpServers.glint` to `claude_desktop_config.json` (`~/.config/Claude/` on Linux, `~/Library/Application Support/Claude/` on macOS) | chat: MCP `ask_user`/`notify` plus the server's MCP instructions (no hooks or rules file exist for chat). The Code tab runs Claude Code and reads `~/.claude`, so `install claude` gives it the Stop hook, AskUserQuestion routing and the rule |
+
+Quit and reopen a desktop app after installing so it loads the MCP server.
 
 Notes:
 
@@ -138,6 +149,21 @@ Cursor uses the same JSON in `.cursor/mcp.json` (add `"type": "stdio"`). Streama
 - **Built-in ask tools.** Claude Code's `AskUserQuestion`, Codex's `request_user_input`, Antigravity's blocking `notify_user` and OpenCode's `question` tool are rung in Glint first (PreToolUse hook / OpenCode plugin). Answer there and the agent gets your answer; dismiss it and the harness asks in the terminal as usual. `GLINT_ASK_TOOLS=0` turns this off.
 - Claude Code labels a blocking Stop hook as "Stop hook error" in its UI; that is cosmetic.
 
+## Where a call came from, and jumping back
+
+Every call carries its origin, captured by the MCP server or hook process (which runs inside the agent's terminal or app): the folder and git branch, the app or terminal (GNOME Terminal, tmux, VS Code, Cursor, kitty…, Codex Desktop, Claude Desktop), the tty, and the session title or the last thing you typed. The panel shows it under the caller, e.g. `payments-api ⎇ feat/refunds · GNOME Terminal · pts/4`.
+
+**↗ go to terminal** (or Ctrl+Shift+J for the active call, or ↗ next to a call in the feed) brings that window to the front:
+
+| source | how |
+|---|---|
+| GNOME Terminal tab | its D-Bus search provider activates the exact tab (works on Wayland) |
+| tmux | `select-window` / `select-pane` / `switch-client` on that pane, then the terminal that shows the client is raised |
+| X11 / XWayland windows (Codex Desktop, VS Code/Cursor under XWayland, xterm…) | `WINDOWID`, or the app's windows by pid with `wmctrl`/`xdotool` |
+| anything else (native-Wayland apps such as Claude Desktop) | can't be raised from outside on GNOME Wayland: Glint copies `cd '<folder>'` to the clipboard and shows the folder and tty |
+
+`GLINT_ORIGIN=0` stops capturing origins; `GLINT_TITLE` sets a title for MCP calls. The last prompt is never written to logs (the hook log redacts it).
+
 ## Keys
 
 | Key | What it does |
@@ -148,6 +174,7 @@ Cursor uses the same JSON in `.cursor/mcp.json` (add `"type": "stdio"`). Streama
 | Ctrl+Shift+G | Focus the newest panel (Cmd on macOS). `GLINT_HOTKEY` overrides. |
 | Ctrl+Shift+F | Toggle the group feed. `GLINT_FEED_HOTKEY` overrides. |
 | Ctrl+Shift+L | Open the concept picker. `GLINT_PICKER_HOTKEY` overrides. |
+| Ctrl+Shift+J | Jump to where the active call came from. `GLINT_JUMP_HOTKEY` overrides. |
 
 ## Environment variables
 
@@ -159,6 +186,8 @@ Cursor uses the same JSON in `.cursor/mcp.json` (add `"type": "stdio"`). Streama
 | `GLINT_LAYOUT` | unset | Start layout: `deneme1`/`corner`, `deneme2`/`center`, `deneme3`/`badge`, `ticker`, `bubble`, `edge`, `island`. When set it wins over the picker's saved choice at start. |
 | `GLINT_DETECT_QUESTIONS` | on | `0` stops the Stop hook from turning a plain-text question into a question call. |
 | `GLINT_ASK_TOOLS` | on | `0` leaves the harness's built-in ask tool (AskUserQuestion, question…) alone. |
+| `GLINT_ORIGIN` | on | `0` stops recording where a call came from (folder, branch, terminal, last prompt). |
+| `GLINT_JUMP_HOTKEY` | `Ctrl+Shift+J` | Accelerator for jumping to the active call's source. |
 | `GLINT_MUTE` | off | `1` silences call sounds. |
 | `GLINT_HOOK_TIMEOUT_MS` | `600000` | How long a Stop call rings. |
 | `GLINT_HOOK_MAX_CHAIN` | `8` | Max continuations in a row. |

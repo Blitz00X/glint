@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { packageRoot } from "./paths.js";
-import { type Harness } from "./hooks.js";
+import { HARNESSES, type Harness } from "./hooks.js";
 
 /**
  * `glint install <harness>` prints (or with --write, merges) the MCP server,
@@ -45,8 +45,34 @@ export interface InstallStep {
   changed: boolean;
 }
 
+/** Desktop apps: Codex desktop shares ~/.codex with the CLI; Claude Desktop has its own MCP config. */
+export const DESKTOP_APPS = ["codex-desktop", "claude-desktop"] as const;
+export type DesktopApp = (typeof DESKTOP_APPS)[number];
+export type InstallTarget = Harness | DesktopApp;
+export const INSTALL_TARGETS: readonly InstallTarget[] = [...HARNESSES, ...DESKTOP_APPS];
+
+export function parseInstallTarget(value: string | undefined): InstallTarget | null {
+  const v = (value ?? "").trim().toLowerCase();
+  const alias: Record<string, InstallTarget> = { "codex-app": "codex-desktop", chatgpt: "codex-desktop", "claude-app": "claude-desktop", "claude-desktop-app": "claude-desktop" };
+  if ((INSTALL_TARGETS as readonly string[]).includes(v)) return v as InstallTarget;
+  if (v in alias) return alias[v]!;
+  if (v === "claude-code") return "claude";
+  if (v === "antigravity") return "agy";
+  return null;
+}
+
+/** claude_desktop_config.json for this platform. */
+export function claudeDesktopConfigPath(home: string, platform: NodeJS.Platform = process.platform, env: NodeJS.ProcessEnv = process.env): string {
+  if (platform === "darwin") return path.join(home, "Library", "Application Support", "Claude", "claude_desktop_config.json");
+  if (platform === "win32") return path.join(env.APPDATA || path.join(home, "AppData", "Roaming"), "Claude", "claude_desktop_config.json");
+  return path.join(env.XDG_CONFIG_HOME || path.join(home, ".config"), "Claude", "claude_desktop_config.json");
+}
+
+const CODEX_DESKTOP_NOTE =
+  "Codex desktop app: it runs the same Codex core (`codex app-server`) and reads ~/.codex, so this is the same config as `glint install codex`: the MCP server, the Stop hook (trust it once with /hooks) and AGENTS.md all apply to desktop chats. Calls from it are labelled Codex Desktop. Restart the app to load a changed config.";
+
 export interface InstallPlan {
-  harness: Harness;
+  harness: InstallTarget;
   steps: InstallStep[];
   notes: string[];
 }
@@ -266,8 +292,40 @@ function ruleStep(file: string, description: string): InstallStep {
   return { file, description, content, snippet: block, changed: true };
 }
 
-export function planInstall(harness: Harness, options: InstallOptions = {}): InstallPlan {
+export function planInstall(harness: InstallTarget, options: InstallOptions = {}): InstallPlan {
   const home = options.home ?? process.env.HOME ?? os.homedir();
+  if (harness === "codex-desktop") {
+    if (options.target) throw new Error("codex-desktop has no project-level config; drop --target");
+    const plan = planInstall("codex", options);
+    return { harness, steps: plan.steps, notes: [CODEX_DESKTOP_NOTE, ...plan.notes] };
+  }
+  if (harness === "claude-desktop") {
+    if (options.target) throw new Error("claude-desktop has no project-level config; drop --target");
+    const node = options.node ?? process.execPath;
+    const cli = options.cli ?? defaultCliPath();
+    const file = claudeDesktopConfigPath(home, process.platform, options.home ? {} : process.env);
+    const server = { command: node, args: [cli, "mcp"], env: { GLINT_HARNESS: "claude-desktop" } };
+    return {
+      harness,
+      steps: [
+        jsonStep(
+          file,
+          "glint MCP server for Claude Desktop (chat and Cowork)",
+          (obj) => {
+            const servers = (obj.mcpServers && typeof obj.mcpServers === "object" ? obj.mcpServers : {}) as Record<string, unknown>;
+            servers.glint = server;
+            obj.mcpServers = servers;
+          },
+          { mcpServers: { glint: server } },
+        ),
+      ],
+      notes: [
+        "Claude Desktop chat has no lifecycle hooks and no rules file: Glint works there through the MCP tools (ask_user, notify). The server's MCP instructions tell Claude to ask through Glint, and you can add the same line to a Project's instructions.",
+        "Claude Code sessions inside Claude Desktop (the Code tab) read ~/.claude like the CLI: `glint install claude --write` gives them the Stop hook, AskUserQuestion routing and the rule.",
+        "Quit and reopen Claude Desktop to load the new MCP server.",
+      ],
+    };
+  }
   const node = options.node ?? process.execPath;
   const cli = options.cli ?? defaultCliPath();
   const target = options.target ? path.resolve(options.target) : null;
@@ -689,8 +747,28 @@ export function jsoncRemoveMember(text: string, parent: string, key: string): st
   return null;
 }
 
-export function planUninstall(harness: Harness, options: InstallOptions = {}): InstallPlan {
+export function planUninstall(harness: InstallTarget, options: InstallOptions = {}): InstallPlan {
   const home = options.home ?? process.env.HOME ?? os.homedir();
+  if (harness === "codex-desktop") {
+    const plan = planUninstall("codex", options);
+    return { harness, steps: plan.steps, notes: ["Codex desktop shares ~/.codex with the CLI, so this also removes Glint from the Codex CLI.", ...plan.notes] };
+  }
+  if (harness === "claude-desktop") {
+    const file = claudeDesktopConfigPath(home, process.platform, options.home ? {} : process.env);
+    const existing = readJsonObject(file);
+    const steps: InstallStep[] = [];
+    if (existing === "invalid") steps.push({ file, description: "remove the glint MCP server (not plain JSON; remove by hand)", content: null, snippet: "", changed: false });
+    else if (existing && existing.mcpServers && typeof existing.mcpServers === "object" && "glint" in (existing.mcpServers as object)) {
+      const obj = structuredClone(existing);
+      delete (obj.mcpServers as Record<string, unknown>).glint;
+      steps.push({ file, description: "remove the glint MCP server from Claude Desktop", content: `${JSON.stringify(obj, null, 2)}\n`, snippet: "", changed: true });
+    }
+    return {
+      harness,
+      steps,
+      notes: [steps.length ? "Quit and reopen Claude Desktop so the server unloads." : "Nothing to remove: Glint is not installed for claude-desktop.", "Every changed file is backed up first as <file>.glint-backup-<timestamp>."],
+    };
+  }
   const target = options.target ? path.resolve(options.target) : null;
   const steps: InstallStep[] = [];
   const notes: string[] = [];

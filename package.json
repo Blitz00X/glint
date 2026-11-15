@@ -1,6 +1,6 @@
 {
   "name": "glint",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "private": true,
   "description": "Holographic prompts for AI coding agents. An MCP server pops a translucent TUI over your desktop and returns the answer.",
   "keywords": [
@@ -39,6 +39,7 @@
     "build": "tsc -p tsconfig.json",
     "postbuild": "node -e \"require('fs').chmodSync('dist/cli.js', 0o755)\"",
     "typecheck": "tsc -p tsconfig.test.json --noEmit",
+    "pretest": "node -e \"const major = Number(process.versions.node.split('.')[0]); if (major < 20) { console.error('Glint requires Node 20 or newer; current ' + process.versions.node); process.exit(1); }\"",
     "test": "node --import tsx --test --test-concurrency=1 test/*.test.ts",
     "start": "npm run build && electron .",
     "demo": "npm run build && node dist/cli.js demo",
@@ -64,6 +65,7 @@
     "src/electron/preload.cjs",
     "src/electron/picker-preload.cjs",
     "README.md",
+    "CHANGELOG.md",
     "LICENSE"
   ]
 }

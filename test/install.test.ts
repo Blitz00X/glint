@@ -304,3 +304,37 @@ test("opencode 2.x plugin: idle hook rings Glint and admits the reply as a synth
   assert.equal(seen.input.cwd, "/w/shop");
   assert.deepEqual(synthetic[0], { sessionID: "s1", text: 'The user replied through Glint: "go".', description: "Reply through Glint" });
 });
+
+test("claude-desktop: adds mcpServers.glint next to other servers, uninstall removes only it", async () => {
+  const { planInstall, planUninstall, parseInstallTarget } = await import("../src/install.js");
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "glint-cd-"));
+  const file = path.join(home, ".config", "Claude", "claude_desktop_config.json");
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify({ mcpServers: { other: { command: "x" } }, preferences: { a: 1 } }, null, 2));
+  assert.equal(parseInstallTarget("claude-desktop"), "claude-desktop");
+  assert.equal(parseInstallTarget("codex-app"), "codex-desktop");
+  const plan = planInstall("claude-desktop", { home, node: "/n", cli: "/c.js" });
+  if (process.platform === "linux") {
+    assert.equal(plan.steps.length, 1);
+    assert.equal(plan.steps[0]!.file, file);
+    const obj = JSON.parse(plan.steps[0]!.content!);
+    assert.deepEqual(obj.mcpServers.glint, { command: "/n", args: ["/c.js", "mcp"], env: { GLINT_HARNESS: "claude-desktop" } });
+    assert.deepEqual(obj.mcpServers.other, { command: "x" });
+    assert.deepEqual(obj.preferences, { a: 1 });
+    fs.writeFileSync(file, plan.steps[0]!.content!);
+    const un = planUninstall("claude-desktop", { home });
+    const after = JSON.parse(un.steps[0]!.content!);
+    assert.equal(after.mcpServers.glint, undefined);
+    assert.deepEqual(after.mcpServers.other, { command: "x" });
+  }
+});
+
+test("codex-desktop: same files as codex, with a note", async () => {
+  const { planInstall } = await import("../src/install.js");
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "glint-cx-"));
+  const a = planInstall("codex-desktop", { home, node: "/n", cli: "/c.js" });
+  const b = planInstall("codex", { home, node: "/n", cli: "/c.js" });
+  assert.deepEqual(a.steps.map((s) => s.file), b.steps.map((s) => s.file));
+  assert.equal(a.harness, "codex-desktop");
+  assert.match(a.notes[0]!, /app-server/);
+});

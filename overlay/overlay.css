@@ -1315,3 +1315,93 @@ body[data-layout="island"] .panel.call .composer {
   60% { transform: scaleX(1.02) scaleY(1); opacity: 1; }
   100% { transform: none; }
 }
+
+/* origin: folder ⎇ branch · app · tty, last prompt, jump */
+.origin {
+  margin: -4px 0 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px dashed var(--line);
+  font-size: 11px;
+  color: var(--soft);
+}
+
+.origin-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.origin-where {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  letter-spacing: 0.04em;
+}
+
+.origin-title {
+  margin-top: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-style: italic;
+  opacity: 0.85;
+}
+
+.jump,
+.feed-jump {
+  flex: none;
+  font: inherit;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  padding: 2px 8px;
+  cursor: pointer;
+}
+
+.jump:hover,
+.feed-jump:hover {
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+.feed-jump {
+  margin-left: 6px;
+  padding: 0 5px;
+}
+
+.jump-status {
+  display: block;
+  margin-top: 3px;
+  color: var(--accent);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.jump-status:empty {
+  display: none;
+}
+
+.jump-status.fail {
+  color: var(--amber, #ffb347);
+}
+
+.panel.call.on-hold .origin {
+  margin: 4px 0 0;
+  padding: 0;
+  border: 0;
+}
+
+.panel.call.on-hold .origin-title,
+.panel.call.on-hold .jump,
+.panel.call.on-hold .jump-status {
+  display: none;
+}
+
+.panel.call.incoming .origin .jump {
+  opacity: 0.6;
+}

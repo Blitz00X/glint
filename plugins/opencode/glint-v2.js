@@ -186,10 +186,12 @@ export default {
       const sessionID = idle?.sessionID;
       if (!sessionID) return;
       if (Array.isArray(idle.background) && idle.background.some((job) => job.sessionID === sessionID)) return; // it will wake again
+      let sessionTitle = "";
       try {
         const info = await ctx.session.get({ sessionID });
         const session = info?.data ?? info;
         if (session?.parentID) return; // subagents report to their parent, not to you
+        if (typeof session?.title === "string") sessionTitle = session.title;
       } catch {}
       if (!inflight.claim(`idle:${sessionID}`)) return;
       // The idle hook can run before the last session.text.ended event reaches us.
@@ -200,6 +202,7 @@ export default {
           sessionID,
           cwd: ctx.location?.directory,
           last_assistant_message: lastText.get(sessionID) || "",
+          session_title: sessionTitle,
           glint_consulted: isGlintAsk(lastTool.get(sessionID)),
           chain: chains.get(sessionID) ?? 0,
         });

@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { harnessName } from "./identity.js";
+import { captureOrigin, defaultOriginDeps } from "./origin.js";
 import { ensureHome, glintHome } from "./paths.js";
 import type { AskInput, AskResult, NotifyInput } from "./protocol.js";
 
@@ -534,6 +535,47 @@ function readTail(file: string, maxBytes: number): string {
   }
 }
 
+/** Text of a user message entry in a Claude/Codex JSONL transcript, or "" if it isn't one. */
+function userText(entry: Record<string, unknown>): string {
+  const message = (entry.message ?? entry.payload ?? entry) as Record<string, unknown>;
+  if (entry.type === "event_msg" && message.type === "user_message" && typeof message.message === "string") return message.message;
+  const isUser = entry.type === "user" || message.role === "user";
+  if (!isUser) return "";
+  const content = message.content;
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  // A tool result is not something the person typed.
+  if (content.some((part) => part && typeof part === "object" && (part as { type?: unknown }).type === "tool_result")) return "";
+  return content
+    .map((part) => (part && typeof part === "object" && typeof (part as { text?: unknown }).text === "string" ? (part as { text: string }).text : ""))
+    .filter(Boolean)
+    .join(" ");
+}
+
+/** The last thing the person typed, from the hook payload or the transcript tail (for the call's context line). */
+export function lastUserPrompt(payload: Record<string, unknown>, maxBytes = 1_000_000): string {
+  const direct = pickString(payload, ["session_title", "sessionTitle", "title", "prompt", "last_user_message", "last-user-message", "lastUserMessage", "user_prompt", "lastUserInput", "last_user_input"]);
+  if (direct) return direct;
+  const transcript = pickString(payload, ["transcript_path", "transcriptPath"]);
+  if (!transcript) return "";
+  const lines = readTail(transcript, maxBytes).split("\n");
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i]?.trim();
+    if (!line || !line.includes("user")) continue;
+    let entry: Record<string, unknown>;
+    try {
+      entry = JSON.parse(line) as Record<string, unknown>;
+    } catch {
+      continue;
+    }
+    const text = userText(entry).trim();
+    // Skip harness-injected blocks (<environment_context>, <system-reminder>…) and Glint's own continuations.
+    if (!text || text.startsWith("<") || /^Stop hook feedback|^The user (picked|replied|answered)[^"]{0,40}Glint/i.test(text)) continue;
+    return text;
+  }
+  return "";
+}
+
 /** Claude Code / Codex transcripts are JSONL; take the last assistant text. */
 export function lastAssistantFromTranscript(file: string, maxBytes = 2_000_000): string {
   let data: string;
@@ -771,12 +813,14 @@ export async function runHook(
   const input = normalizeHookInput(payload);
   const agent = harnessName(harness);
   const project = path.basename(input.cwd) || "workspace";
+  const origin = env.GLINT_ORIGIN === "0" ? undefined : captureOrigin({ cwd: input.cwd, title: lastUserPrompt(payload) }, { ...defaultOriginDeps(), env });
   const identity = {
     agent,
     project,
     harness,
     cwd: input.cwd,
     ...(input.session ? { session: input.session.slice(0, 200) } : {}),
+    ...(origin ? { origin } : {}),
   };
 
   if (env.GLINT_HOOK === "0" || env.GLINT_HOOKS === "0") {

@@ -13,6 +13,7 @@ const MAX_FEED = 100;
 
 let hotkeyLabel = "ctrl+shift+g";
 let feedHotkeyLabel = "ctrl+shift+f";
+let jumpHotkeyLabel = "ctrl+shift+j";
 let daemonLayout = "deneme1";
 let badgeExpanded = false;
 let feedOpen = false;
@@ -39,6 +40,7 @@ if (!api) {
       hotkeyLabel = config.hotkeyLabel;
       for (const node of document.querySelectorAll("[data-hotkey]")) node.textContent = hotkeyLabel;
     }
+    if (typeof config.jumpHotkeyLabel === "string") jumpHotkeyLabel = config.jumpHotkeyLabel;
     if (typeof config.feedHotkeyLabel === "string") {
       feedHotkeyLabel = config.feedHotkeyLabel;
       for (const node of document.querySelectorAll("[data-feed-hotkey]")) node.textContent = feedHotkeyLabel;
@@ -68,6 +70,7 @@ if (!api) {
   api.onHistory?.(loadHistory);
   api.onEvent?.(addFeedEvent);
   api.onToggleFeed?.(() => setFeedOpen(!feedOpen));
+  api.onJumpActive?.(jumpActive);
   api.ready();
 }
 
@@ -94,7 +97,89 @@ function callerOf(item) {
     project: c.project ?? item?.project ?? "",
     tag: c.tag || "",
     color: c.color || "#5dfff0",
+    origin: c.origin && typeof c.origin === "object" ? c.origin : null,
   };
+}
+
+/* ------------------------------------------------------- origin + jump */
+
+function baseName(dir) {
+  const parts = String(dir || "").split(/[\\/]/).filter(Boolean);
+  return parts.length ? parts[parts.length - 1] : String(dir || "");
+}
+
+function originText(origin) {
+  if (!origin) return "";
+  const parts = [];
+  if (origin.cwd) parts.push(`${baseName(origin.cwd)}${origin.branch ? ` ⎇ ${origin.branch}` : ""}`);
+  if (origin.app) parts.push(origin.tmux && origin.tmux.target ? `${origin.app} ${origin.tmux.target}` : origin.app);
+  if (origin.tty && origin.kind !== "desktop") parts.push(origin.tty);
+  return parts.join("  ·  ");
+}
+
+function jumpLabel(origin) {
+  if (!origin) return "↗ go to source";
+  if (origin.kind === "desktop" || origin.kind === "vscode") return `↗ go to ${origin.app || "app"}`;
+  return "↗ go to terminal";
+}
+
+function canJump(origin) {
+  return !!(origin && (origin.gnomeScreen || origin.windowId || origin.pid || origin.tmux || origin.cwd));
+}
+
+async function jump(origin, statusEl) {
+  if (!origin || !api.jump) return;
+  if (statusEl) statusEl.textContent = "jumping…";
+  let result;
+  try {
+    result = await api.jump(origin);
+  } catch (error) {
+    result = { ok: false, message: String(error && error.message ? error.message : error) };
+  }
+  if (statusEl) {
+    statusEl.textContent = result && result.message ? (result.ok ? `✓ ${result.message}` : result.message) : "";
+    statusEl.classList.toggle("fail", !(result && result.ok));
+    window.setTimeout(() => {
+      if (statusEl.isConnected) statusEl.textContent = "";
+    }, result && result.ok ? 2500 : 9000);
+  }
+}
+
+/** Folder ⎇ branch · app · tty, the last prompt, and the jump button. */
+function originBlock(origin) {
+  if (!origin) return null;
+  const box = document.createElement("div");
+  box.className = "origin";
+  const line = document.createElement("div");
+  line.className = "origin-line";
+  const text = document.createElement("span");
+  text.className = "origin-where";
+  text.textContent = originText(origin);
+  text.title = [origin.cwd, origin.tty].filter(Boolean).join("  ");
+  line.append(text);
+  const status = document.createElement("span");
+  status.className = "jump-status";
+  if (canJump(origin)) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "jump";
+    button.textContent = jumpLabel(origin);
+    button.title = `${jumpLabel(origin)} (${jumpHotkeyLabel})`;
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      void jump(origin, status);
+    });
+    line.append(button);
+  }
+  box.append(line);
+  if (origin.title) {
+    const title = document.createElement("div");
+    title.className = "origin-title";
+    title.textContent = `“${origin.title}”`;
+    box.append(title);
+  }
+  box.append(status);
+  return box;
 }
 
 const KIND_LABEL = {
@@ -152,6 +237,8 @@ function addQuestion(question) {
 
   const { card, status } = callerCard(question, question.kind);
   panel.append(sweep(), ...corners(), card);
+  const origin = originBlock(caller.origin);
+  if (origin) panel.append(origin);
 
   const body = document.createElement("div");
   body.className = "call-body";
@@ -219,6 +306,7 @@ function addQuestion(question) {
   feedKey.dataset.feedHotkey = "1";
   feedKey.textContent = feedHotkeyLabel;
   hint.append(hotkey, " focus  ·  ", feedKey, " feed");
+  if (caller.origin && canJump(caller.origin)) hint.append(`  ·  ${jumpHotkeyLabel} jump`);
   const hold = document.createElement("span");
   hold.className = "hold-count";
   hint.append(hold);
@@ -586,6 +674,23 @@ function activePanel() {
   return stack.querySelector(".panel.notice:not(.leaving)");
 }
 
+/** Ctrl+Shift+J: jump to where the active call (or the newest call in the feed) came from. */
+function jumpActive() {
+  let entry = activeId && calls.has(activeId) ? calls.get(activeId) : null;
+  let origin = entry ? callerOf(entry.question).origin : null;
+  let statusEl = entry ? entry.panel.querySelector(".jump-status") : null;
+  if (!origin) {
+    for (let i = feedEvents.length - 1; i >= 0; i--) {
+      const o = callerOf(feedEvents[i]).origin;
+      if (o) {
+        origin = o;
+        break;
+      }
+    }
+  }
+  if (origin) void jump(origin, statusEl);
+}
+
 function focusLatest() {
   const panel = activePanel();
   if (!panel) return;
@@ -721,6 +826,18 @@ function renderFeedEvent(event) {
     where.className = "where";
     where.textContent = caller.project ? ` · ${caller.project}` : "";
     meta.append(name, tag, where);
+    if (caller.origin && canJump(caller.origin)) {
+      const go = document.createElement("button");
+      go.type = "button";
+      go.className = "feed-jump";
+      go.textContent = "↗";
+      go.title = `${jumpLabel(caller.origin)} · ${originText(caller.origin)}`;
+      go.addEventListener("click", (e) => {
+        e.stopPropagation();
+        void jump(caller.origin, null);
+      });
+      meta.append(go);
+    }
     if (event.type === "call") {
       const kind = document.createElement("span");
       kind.className = "kind";
