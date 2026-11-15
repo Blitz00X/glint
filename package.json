@@ -37,6 +37,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "postbuild": "node -e \"require('fs').chmodSync('dist/cli.js', 0o755)\"",
     "typecheck": "tsc -p tsconfig.test.json --noEmit",
     "test": "node --import tsx --test --test-concurrency=1 test/*.test.ts",
     "start": "npm run build && electron .",
