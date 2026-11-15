@@ -1,6 +1,6 @@
 {
   "name": "glint",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "private": true,
   "description": "Holographic prompts for AI coding agents. An MCP server pops a translucent TUI over your desktop and returns the answer.",
   "keywords": [

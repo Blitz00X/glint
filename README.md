@@ -134,6 +134,8 @@ Cursor uses the same JSON in `.cursor/mcp.json` (add `"type": "stdio"`). Streama
 - **No made-up buttons.** A Stop call shows the agent's last message. If it ends with a clear option list next to a question (`1. …`, `a) …`, `- …`), those options become the numbered choices; otherwise you just type.
 - **Stopping.** Dismiss (Esc), let it time out, or type a short stop (`that's all`, `stop`, `done`, `dur`, `yeter`, `bu kadar`, `bitti`) and the agent stops. Anything else is sent back as your next message.
 - **Never hangs, never loops.** Calls time out (`GLINT_HOOK_TIMEOUT_MS`, default 10 min); a down daemon lets the agent stop; continuations are capped (`GLINT_HOOK_MAX_CHAIN`, default 8); and if the agent's last action was already a Glint `ask_user`, the hook stays quiet instead of ringing twice.
+- **Questions written in the terminal.** Agents sometimes type their question ("Should I…?", "Postgres mi SQLite mı?", a numbered list of options, "I'm blocked on…") and stop instead of calling `ask_user`. The Stop/idle hook detects this and rings a real question call: the body is the agent's own question (the tail of its message), the options it listed become buttons, and the text box stays. Your answer goes back as the next message. `GLINT_DETECT_QUESTIONS=0` turns this off (the call then rings as a plain stop).
+- **Built-in ask tools.** Claude Code's `AskUserQuestion`, Codex's `request_user_input`, Antigravity's blocking `notify_user` and OpenCode's `question` tool are rung in Glint first (PreToolUse hook / OpenCode plugin). Answer there and the agent gets your answer; dismiss it and the harness asks in the terminal as usual. `GLINT_ASK_TOOLS=0` turns this off.
 - Claude Code labels a blocking Stop hook as "Stop hook error" in its UI; that is cosmetic.
 
 ## Keys
@@ -155,6 +157,8 @@ Cursor uses the same JSON in `.cursor/mcp.json` (add `"type": "stdio"`). Streama
 | `GLINT_DND` | on (GNOME) | `0` stops Glint from pausing GNOME notification banners during calls. |
 | `GLINT_TOP_OFFSET` | `168` on Linux, `16` elsewhere | Distance in px from the top of the work area to the first panel. |
 | `GLINT_LAYOUT` | unset | Start layout: `deneme1`/`corner`, `deneme2`/`center`, `deneme3`/`badge`, `ticker`, `bubble`, `edge`, `island`. When set it wins over the picker's saved choice at start. |
+| `GLINT_DETECT_QUESTIONS` | on | `0` stops the Stop hook from turning a plain-text question into a question call. |
+| `GLINT_ASK_TOOLS` | on | `0` leaves the harness's built-in ask tool (AskUserQuestion, question…) alone. |
 | `GLINT_MUTE` | off | `1` silences call sounds. |
 | `GLINT_HOOK_TIMEOUT_MS` | `600000` | How long a Stop call rings. |
 | `GLINT_HOOK_MAX_CHAIN` | `8` | Max continuations in a row. |

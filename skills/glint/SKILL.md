@@ -12,7 +12,9 @@ to you as the tool result. Every call and notice also lands in one shared
 group-chat feed, so the user can see what all their agents said.
 
 The user runs many agents in the background. **If you stop without calling
-Glint, nobody notices you are waiting.**
+Glint, nobody notices you are waiting.** Never ask the user in plain text
+(no "should I…?" or option lists in your reply): always call `ask_user`. If
+you finish or are blocked, still call `ask_user` with the open issues listed.
 
 ## When to call
 
@@ -45,9 +47,11 @@ Tool names differ by harness: `ask_user`, `glint_ask_user` (OpenCode), `mcp__gli
 ## Safety net
 
 Glint also installs lifecycle hooks (`glint install <harness>`) that ring the
-user when you stop even if you forget to call. Calling `ask_user` yourself is
-still better: you can write a clear question and choices instead of the hook
-forwarding your last message.
+user when you stop even if you forget to call: a question left in plain text is
+turned into a call, and built-in ask tools (Claude's `AskUserQuestion`, Codex's
+`request_user_input`) are answered through Glint. Calling `ask_user` yourself
+is still better: you write the question and choices instead of a hook guessing
+them from your last message.
 
 ## Short rule for AGENTS.md / CLAUDE.md
 

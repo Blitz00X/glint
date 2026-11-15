@@ -7,14 +7,21 @@
 // touching the terminal. Dismiss, a timeout, or a short stop ("that's all",
 // "dur") lets the session rest.
 //
+// When the agent uses OpenCode's own `question` tool, Glint rings it first;
+// your answer becomes the tool result. Dismiss it and the usual question form
+// appears in the terminal.
+//
 // `glint install opencode --write` fills in the two paths below and lists this
 // file under "plugin" in opencode.json(c). GLINT_NODE / GLINT_CLI override them.
 import { spawn } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 const GLINT_NODE = process.env.GLINT_NODE || "__GLINT_NODE__";
 const GLINT_CLI = process.env.GLINT_CLI || "__GLINT_CLI__";
 
-function runHook(event, payload) {
+function runHook(event, payload, signal) {
   return new Promise((resolve) => {
     let out = "";
     let child;
@@ -28,6 +35,10 @@ function runHook(event, payload) {
       out += chunk;
     });
     child.on("error", () => resolve(null));
+    if (signal) {
+      if (signal.aborted) child.kill();
+      else signal.addEventListener("abort", () => child.kill(), { once: true });
+    }
     child.on("close", () => {
       try {
         resolve(out.trim() ? JSON.parse(out) : null);
@@ -41,6 +52,38 @@ function runHook(event, payload) {
 
 export const isGlintAsk = (call) => /glint/i.test(String(call || "")) && /ask_user/i.test(String(call || ""));
 
+// OpenCode may set the plugin up more than once in one process (e.g. global +
+// project scope); only one copy may ring for a given session or form.
+const local = (globalThis.__glintInflight ??= new Set());
+// ...sometimes in two processes, so the claim is also a lock file.
+const lockFile = (key) => path.join(os.tmpdir(), `glint-opencode-${key.replace(/[^A-Za-z0-9_.-]/g, "_")}.lock`);
+const inflight = {
+  /** Atomically claim `key`; false if another copy (this process or another) holds it. */
+  claim(key) {
+    if (local.has(key)) return false;
+    const file = lockFile(key);
+    try {
+      fs.writeFileSync(file, String(process.pid), { flag: "wx" });
+    } catch {
+      try {
+        if (Date.now() - fs.statSync(file).mtimeMs < 20 * 60_000) return false; // held
+        fs.writeFileSync(file, String(process.pid)); // stale lock left by a crash
+      } catch {
+        return false;
+      }
+    }
+    local.add(key);
+    return true;
+  },
+  release(key) {
+    local.delete(key);
+    try {
+      if (fs.readFileSync(lockFile(key), "utf8") === String(process.pid)) fs.rmSync(lockFile(key));
+    } catch {}
+  },
+};
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
 export default {
   id: "glint",
   async setup(ctx) {
@@ -49,6 +92,64 @@ export default {
     const chains = new Map(); // sessionID -> Glint continuations in a row
     const toolNames = new Map(); // tool call id -> tool name
     const stop = new AbortController();
+    // OpenCode's own `question` tool: ring it in Glint first; if you answer
+    // there, that is the tool's result. Dismiss/timeout falls back to the
+    // normal question form in the terminal.
+    async function ringQuestion(sessionID, input, signal) {
+      if (process.env.GLINT_HOOK === "0" || process.env.GLINT_ASK_TOOLS === "0") return null;
+      const questions = Array.isArray(input?.questions) ? input.questions : [];
+      if (questions.length === 0) return null;
+      const out = await runHook(
+        "PreToolUse",
+        {
+          sessionID,
+          cwd: ctx.location?.directory,
+          tool_name: "question",
+          tool_input: {
+            questions: questions.map((q) => ({
+              question: q.question || q.header || "",
+              header: q.header || "",
+              options: (q.options || []).map((o) => ({ label: o.label })),
+              multiple: q.multiple === true,
+            })),
+          },
+        },
+        signal,
+      );
+      if (!out || out.action !== "answer" || !Array.isArray(out.answers)) return null;
+      return questions.map((q, i) => {
+        const value = String(out.answers[i] ?? "").trim();
+        if (!value) return [];
+        return q.multiple === true ? value.split(",").map((v) => v.trim()).filter(Boolean) : [value];
+      });
+    }
+
+    try {
+      await ctx.tool.transform((tools) => {
+        if (!tools.get("question")) return;
+        tools.update("question", (tool) => {
+          const original = tool.execute;
+          tool.execute = async (input, toolCtx) => {
+            const key = `question:${toolCtx?.sessionID}:${toolCtx?.id ?? toolCtx?.callID ?? JSON.stringify(input).length}`;
+            // Another copy of this plugin is already ringing (or fell back): just run the tool.
+            if (!inflight.claim(key)) return original(input, toolCtx);
+            try {
+              let answers = null;
+              try {
+                answers = await ringQuestion(toolCtx?.sessionID, input, toolCtx?.signal);
+              } catch {}
+              if (!answers) return await original(input, toolCtx);
+              const content = `User has answered your questions (through Glint): ${input.questions
+                .map((q, i) => `"${q.question}"="${answers[i]?.length ? answers[i].join(", ") : "Unanswered"}"`)
+                .join(", ")}. You can now continue with the user's answers in mind.`;
+              return { output: { answers }, content, metadata: { answers } };
+            } finally {
+              inflight.release(key);
+            }
+          };
+        });
+      });
+    } catch {}
 
     void (async () => {
       for await (const event of ctx.event.subscribe({
@@ -90,13 +191,21 @@ export default {
         const session = info?.data ?? info;
         if (session?.parentID) return; // subagents report to their parent, not to you
       } catch {}
-      const out = await runHook("session.idle", {
-        sessionID,
-        cwd: ctx.location?.directory,
-        last_assistant_message: lastText.get(sessionID) || "",
-        glint_consulted: isGlintAsk(lastTool.get(sessionID)),
-        chain: chains.get(sessionID) ?? 0,
-      });
+      if (!inflight.claim(`idle:${sessionID}`)) return;
+      // The idle hook can run before the last session.text.ended event reaches us.
+      for (let i = 0; i < 20 && !lastText.get(sessionID); i++) await sleep(100);
+      let out;
+      try {
+        out = await runHook("session.idle", {
+          sessionID,
+          cwd: ctx.location?.directory,
+          last_assistant_message: lastText.get(sessionID) || "",
+          glint_consulted: isGlintAsk(lastTool.get(sessionID)),
+          chain: chains.get(sessionID) ?? 0,
+        });
+      } finally {
+        inflight.release(`idle:${sessionID}`);
+      }
       if (out && out.action === "continue" && typeof out.prompt === "string" && out.prompt) {
         chains.set(sessionID, (chains.get(sessionID) ?? 0) + 1);
         lastText.delete(sessionID);

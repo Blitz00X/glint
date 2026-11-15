@@ -52,6 +52,25 @@ export interface InstallPlan {
 }
 
 const MARKER = "<!-- glint:rule -->";
+const END_MARKER = "<!-- /glint:rule -->";
+/** Rule texts written by older Glint versions (no end marker), so install can upgrade them in place. */
+const LEGACY_RULES = [
+  "## Glint (reach the user without the terminal)\n\nThe user does not watch this terminal. Whenever you would stop and wait for them, call them through Glint instead:\n\n- **Finished**, **blocked on a decision**, or **need approval** \u2192 call the `glint` MCP tool `ask_user` (the tool may appear as `glint_ask_user` or `mcp__glint__ask_user`). Start the question with a one-line summary of where you are, then ask. Offer 2\u20134 short `choices` when you can; the user may also type a free answer. Use the answer as their next message and keep going.\n- **Progress or FYI** that needs no reply \u2192 `notify`.\n- Always set `agent` (your product name, e.g. \"Claude Code\", \"Codex\", \"OpenCode\", \"Antigravity\") and `project` (the repo or folder name).\n- If `ask_user` returns `dismissed` or `timeout`, stop and summarize; do not call again in a loop.",
+  "## Glint\n\nWhen you finish, get blocked, or need approval, call the glint MCP tool `ask_user` instead of waiting in the terminal.",
+];
+
+/** Where the Glint rule block sits in a CLAUDE.md/AGENTS.md, or null if it was edited by hand. */
+export function findRuleBlock(text: string): { start: number; end: number } | null {
+  const start = text.indexOf(MARKER);
+  if (start < 0) return null;
+  const endAt = text.indexOf(END_MARKER, start);
+  if (endAt >= 0) return { start, end: endAt + END_MARKER.length };
+  for (const rule of [ruleText(), ...LEGACY_RULES]) {
+    const candidate = `${MARKER}\n${rule}`;
+    if (text.startsWith(candidate, start)) return { start, end: start + candidate.length };
+  }
+  return null;
+}
 
 export function defaultCliPath(): string {
   const here = path.dirname(fileURLToPath(import.meta.url));
@@ -214,7 +233,8 @@ type HookList = Array<{ matcher?: string; hooks: Array<Record<string, unknown>> 
 
 function addHook(list: unknown, entry: { matcher?: string; hooks: Array<Record<string, unknown>> }, needle: string): HookList {
   const current: HookList = Array.isArray(list) ? (list as HookList) : [];
-  const already = JSON.stringify(current).includes(needle);
+  // Same command under a different matcher (ask tools vs. approvals) is a separate entry.
+  const already = current.some((e) => (e.matcher ?? "") === (entry.matcher ?? "") && JSON.stringify(e).includes(needle));
   return already ? current : [...current, entry];
 }
 
@@ -227,14 +247,20 @@ function jsonStep(file: string, description: string, mutate: (obj: Record<string
   const obj = structuredClone(existing ?? {});
   mutate(obj);
   const content = `${JSON.stringify(obj, null, 2)}\n`;
-  return { file, description, content, snippet: snippetText, changed: content !== readText(file) };
+  // A missing trailing newline alone is not a change (Claude rewrites its JSON without one).
+  return { file, description, content, snippet: snippetText, changed: content.trimEnd() !== (readText(file) ?? "").trimEnd() };
 }
 
 function ruleStep(file: string, description: string): InstallStep {
   const existing = readText(file) ?? "";
-  const block = `${MARKER}\n${ruleText()}\n`;
+  const body = `${MARKER}\n${ruleText()}\n${END_MARKER}`;
+  const block = `${body}\n`;
   if (existing.includes(MARKER)) {
-    return { file, description, content: existing, snippet: block, changed: false };
+    const found = findRuleBlock(existing);
+    if (!found) return { file, description: `${description} (rule was edited by hand; left alone)`, content: existing, snippet: block, changed: false };
+    // Replace an older rule text with the current one, in place.
+    const content = `${existing.slice(0, found.start)}${body}${existing.slice(found.end)}`;
+    return { file, description: content === existing ? description : `${description} (updated to the current rule)`, content, snippet: block, changed: content !== existing };
   }
   const content = existing ? `${existing.replace(/\s*$/, "")}\n\n${block}` : block;
   return { file, description, content, snippet: block, changed: true };
@@ -256,17 +282,23 @@ export function planInstall(harness: Harness, options: InstallOptions = {}): Ins
       matcher: "Bash|Write|Edit|MultiEdit",
       hooks: [{ type: "command", command: hookCommand(node, cli, "claude", "PreToolUse"), timeout: 180 }],
     };
+    // AskUserQuestion is always routed to Glint (answered there, fed back as the tool's answers).
+    const askPre = {
+      matcher: "AskUserQuestion",
+      hooks: [{ type: "command", command: hookCommand(node, cli, "claude", "PreToolUse"), timeout: 900 }],
+    };
     steps.push(
       jsonStep(
         settings,
-        "Stop hook (and PreToolUse with --approvals) in Claude Code settings",
+        "Stop hook + AskUserQuestion PreToolUse hook (and approvals with --approvals) in Claude Code settings",
         (obj) => {
           const hooks = (obj.hooks && typeof obj.hooks === "object" ? obj.hooks : {}) as Record<string, unknown>;
           hooks.Stop = addHook(hooks.Stop, stop, "hook claude Stop");
+          hooks.PreToolUse = addHook(hooks.PreToolUse, askPre, "hook claude PreToolUse");
           if (options.approvals) hooks.PreToolUse = addHook(hooks.PreToolUse, pre, "hook claude PreToolUse");
           obj.hooks = hooks;
         },
-        { hooks: { Stop: [stop], ...(options.approvals ? { PreToolUse: [pre] } : {}) } },
+        { hooks: { Stop: [stop], PreToolUse: [askPre, ...(options.approvals ? [pre] : [])] } },
       ),
     );
     const mcpFile = target ? path.join(target, ".mcp.json") : path.join(home, ".claude.json");
@@ -321,17 +353,19 @@ export function planInstall(harness: Harness, options: InstallOptions = {}): Ins
     });
     const stop = { hooks: [{ type: "command", command: hookCommand(node, cli, "codex", "Stop"), timeout: 900 }] };
     const pre = { matcher: "*", hooks: [{ type: "command", command: hookCommand(node, cli, "codex", "PreToolUse"), timeout: 180 }] };
+    const askPre = { matcher: "request_user_input", hooks: [{ type: "command", command: hookCommand(node, cli, "codex", "PreToolUse"), timeout: 900 }] };
     steps.push(
       jsonStep(
         path.join(dir, "hooks.json"),
-        "Stop hook in Codex hooks.json",
+        "Stop hook + request_user_input PreToolUse hook in Codex hooks.json",
         (obj) => {
           const hooks = (obj.hooks && typeof obj.hooks === "object" ? obj.hooks : {}) as Record<string, unknown>;
           hooks.Stop = addHook(hooks.Stop, stop, "hook codex Stop");
           if (options.approvals) hooks.PreToolUse = addHook(hooks.PreToolUse, pre, "hook codex PreToolUse");
+          else hooks.PreToolUse = addHook(hooks.PreToolUse, askPre, "hook codex PreToolUse");
           obj.hooks = hooks;
         },
-        { hooks: { Stop: [stop], ...(options.approvals ? { PreToolUse: [pre] } : {}) } },
+        { hooks: { Stop: [stop], PreToolUse: [options.approvals ? pre : askPre] } },
       ),
     );
     steps.push(ruleStep(target ? path.join(target, "AGENTS.md") : path.join(dir, "AGENTS.md"), "Glint rule in AGENTS.md"));
@@ -345,6 +379,7 @@ export function planInstall(harness: Harness, options: InstallOptions = {}): Ins
     // Stop and other non-tool events take a flat list of handlers; only
     // PreToolUse/PostToolUse use the {matcher, hooks} wrapper.
     const stopHandler = { type: "command", command: hookCommand(node, cli, "agy", "Stop"), timeout: 900 };
+    const askEntry = { matcher: "notify_user", hooks: [{ type: "command", command: hookCommand(node, cli, "agy", "PreToolUse"), timeout: 900 }] };
     const preEntry = { matcher: "run_command", hooks: [{ type: "command", command: hookCommand(node, cli, "agy", "PreToolUse"), timeout: 180 }] };
     steps.push(
       jsonStep(
@@ -357,10 +392,12 @@ export function planInstall(harness: Harness, options: InstallOptions = {}): Ins
             (h) => !(h && typeof h === "object" && Array.isArray((h as { hooks?: unknown }).hooks) && JSON.stringify(h).includes("hook agy Stop")),
           );
           current.Stop = JSON.stringify(stops).includes("hook agy Stop") ? stops : [...stops, stopHandler];
+          // notify_user that blocks on the user is rung in Glint and answered there.
+          current.PreToolUse = addHook(current.PreToolUse, askEntry, "hook agy PreToolUse");
           if (options.approvals) current.PreToolUse = addHook(current.PreToolUse, preEntry, "hook agy PreToolUse");
           obj.glint = current;
         },
-        { glint: { Stop: [stopHandler], ...(options.approvals ? { PreToolUse: [preEntry] } : {}) } },
+        { glint: { Stop: [stopHandler], PreToolUse: [askEntry, ...(options.approvals ? [preEntry] : [])] } },
       ),
     );
     const server = { command: node, args: mcpArgs, env: { GLINT_HARNESS: "agy", GLINT_AGENT: "Antigravity" } };
@@ -524,10 +561,8 @@ export function stripGlintHooks(hooks: Record<string, unknown>, harness: Harness
 function ruleRemovalStep(file: string, description: string): InstallStep | null {
   const existing = readText(file);
   if (existing == null || !existing.includes(MARKER)) return null;
-  const exact = `${MARKER}\n${ruleText()}\n`;
-  let content: string | null = null;
-  if (existing.includes(exact)) content = existing.replace(exact, "");
-  else if (existing.includes(`${MARKER}\n${ruleText()}`)) content = existing.replace(`${MARKER}\n${ruleText()}`, "");
+  const found = findRuleBlock(existing);
+  let content: string | null = found ? `${existing.slice(0, found.start)}${existing.slice(found.end)}` : null;
   if (content == null) {
     return { file, description: `${description} (the rule text was edited; remove the block after ${MARKER} by hand)`, content: null, snippet: MARKER, changed: false };
   }

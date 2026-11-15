@@ -79,7 +79,7 @@ test("claude Stop: a typed answer blocks the stop and becomes the reason", async
   assert.equal(asked[0]!.agent, "Claude Code");
   assert.equal(asked[0]!.project, "payments-api");
   assert.equal(asked[0]!.session, "sess-1");
-  assert.equal(asked[0]!.kind, "stop");
+  assert.equal(asked[0]!.kind, "question", "a plain-text question rings as a QUESTION call");
   assert.deepEqual(asked[0]!.choices, [], "no made-up buttons on a stop call");
 });
 
@@ -336,7 +336,7 @@ test("glint hook CLI end to end: stdin JSON in, Claude JSON out, answer from the
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
     const call = daemon.pending()[0]!;
-    assert.equal(call.kind, "stop");
+    assert.equal(call.kind, "question");
     assert.equal(call.caller.name, "Claude Code");
     assert.match(call.caller.tag, /^[0-9a-z]{4}$/);
     daemon.settle({ id: call.id, status: "answered", answer: "yes, apply it", via: "text" });
