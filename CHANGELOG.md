@@ -19,7 +19,9 @@ Earlier releases are recorded in Git tags (`v0.3.0`, `v0.3.1`).
 - **Go to terminal with no terminal window:** sessions managed by an app or a
   server have a folder but no window to raise. The button now opens a terminal
   at that folder (GNOME Terminal, kgx or Ptyxis) instead of only copying a `cd`
-  command.
+  command. For OpenCode it starts the TUI on the same session
+  (`opencode --session <id>`), so the person lands in the conversation rather
+  than a bare shell.
 
 ## 0.4.1 — 2026-11-15
 

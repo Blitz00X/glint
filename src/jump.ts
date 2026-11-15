@@ -36,17 +36,33 @@ export function defaultJumpDeps(copy?: (text: string) => void): JumpDeps {
   };
 }
 
-/** No window to raise (an app-managed session): open a terminal at the folder. */
-async function openTerminal(cwd: string, deps: JumpDeps): Promise<boolean> {
+/** The harness command that reopens the same session in its TUI, when known. */
+function resumeCommand(origin: Origin): string[] | null {
+  if (!origin.session) return null;
+  if (origin.harness === "opencode") return ["opencode", "--session", origin.session];
+  return null;
+}
+
+/**
+ * No window to raise (an app-managed session): open a terminal at the folder.
+ * If the harness exposes a session id, start its TUI on that same session
+ * instead of a bare shell.
+ */
+async function openTerminal(cwd: string, origin: Origin, deps: JumpDeps): Promise<{ ok: boolean; resumed: boolean }> {
+  const resume = resumeCommand(origin);
+  if (resume) {
+    const gnome = await deps.run("gnome-terminal", [`--working-directory=${cwd}`, "--", ...resume]);
+    if (gnome.ok) return { ok: true, resumed: true };
+  }
   const attempts: Array<[string, string[]]> = [
     ["gnome-terminal", [`--working-directory=${cwd}`]],
     ["kgx", ["--working-directory", cwd]],
     ["ptyxis", ["--new-window", "--working-directory", cwd]],
   ];
   for (const [cmd, args] of attempts) {
-    if ((await deps.run(cmd, args)).ok) return true;
+    if ((await deps.run(cmd, args)).ok) return { ok: true, resumed: false };
   }
-  return false;
+  return { ok: false, resumed: false };
 }
 
 async function x11ActivatePid(pid: number, deps: JumpDeps): Promise<boolean> {
@@ -124,8 +140,16 @@ export async function jumpTo(raw: unknown, deps: JumpDeps): Promise<JumpResult> 
   // copying a cd command the person may never see.
   if (origin.cwd && origin.kind !== "desktop" && origin.kind !== "vscode") {
     tried.push("terminal");
-    if (await openTerminal(origin.cwd, deps)) {
-      return { ok: true, method: "terminal", message: `opened a terminal in ${origin.project || origin.cwd}`, tried };
+    const opened = await openTerminal(origin.cwd, origin, deps);
+    if (opened.ok) {
+      const where = origin.project || origin.cwd;
+      const what = origin.harness === "opencode" ? "OpenCode TUI" : "agent session";
+      return {
+        ok: true,
+        method: opened.resumed ? "session" : "terminal",
+        message: opened.resumed ? `opened the ${what} in a terminal (${where})` : `opened a terminal in ${where}`,
+        tried,
+      };
     }
   }
 

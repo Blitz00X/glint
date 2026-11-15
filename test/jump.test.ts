@@ -22,6 +22,22 @@ test("an app-managed session opens a terminal at its folder", async () => {
   assert.ok(calls.some((call) => call.startsWith("gnome-terminal --working-directory=/tmp/glint-project")));
 });
 
+test("an OpenCode session reopens the same TUI, not a bare shell", async () => {
+  const calls: string[] = [];
+  const result = await jumpTo(
+    { cwd: "/tmp/glint-project", project: "Asistan", kind: "unknown", harness: "opencode", session: "ses_123" },
+    {
+      run: async (cmd, args) => {
+        calls.push(`${cmd} ${args.join(" ")}`);
+        return { ok: cmd === "gnome-terminal", stdout: "" };
+      },
+    },
+  );
+  assert.equal(result.ok, true);
+  assert.equal(result.method, "session");
+  assert.match(calls[0] ?? "", /gnome-terminal --working-directory=\/tmp\/glint-project -- opencode --session ses_123/);
+});
+
 test("a desktop app with no focusable window still copies the cd command", async () => {
   let copied = "";
   const result = await jumpTo(

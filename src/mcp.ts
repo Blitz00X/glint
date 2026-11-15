@@ -237,8 +237,13 @@ function sessionFields(): { session: string; harness: string; cwd: string; origi
     env.CLAUDE_SESSION_ID?.trim() ||
     env.OPENCODE_SESSION_ID?.trim() ||
     `mcp-${process.ppid}`;
+  const harness = inferHarness();
   const origin = process.env.GLINT_ORIGIN === "0" ? undefined : captureOrigin({ cwd: process.cwd(), title: env.GLINT_TITLE });
-  return { session: session.slice(0, 200), harness: inferHarness(), cwd: process.cwd(), ...(origin ? { origin } : {}) };
+  if (origin) {
+    origin.harness = harness;
+    origin.session = session.slice(0, 200);
+  }
+  return { session: session.slice(0, 200), harness, cwd: process.cwd(), ...(origin ? { origin } : {}) };
 }
 
 function inferAgent(): string {

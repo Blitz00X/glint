@@ -14,6 +14,9 @@ export const originSchema = z.object({
   cwd: z.string().max(1_000).optional(),
   /** Human project label; a bare session UUID is never used. */
   project: z.string().max(120).optional(),
+  /** Harness id and its session id, so a terminal can resume the same TUI. */
+  harness: z.string().max(40).optional(),
+  session: z.string().max(200).optional(),
   branch: z.string().max(200).optional(),
   /** Human name: "GNOME Terminal", "tmux", "VS Code", "Cursor", "Codex Desktop", "Claude Desktop", "kitty"… */
   app: z.string().max(60).optional(),

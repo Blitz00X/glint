@@ -160,7 +160,7 @@ Every call carries its origin, captured by the MCP server or hook process (which
 | GNOME Terminal tab | its D-Bus search provider activates the exact tab (works on Wayland) |
 | tmux | `select-window` / `select-pane` / `switch-client` on that pane, then the terminal that shows the client is raised |
 | X11 / XWayland windows (Codex Desktop, VS Code/Cursor under XWayland, xterm…) | `WINDOWID`, or the app's windows by pid with `wmctrl`/`xdotool` |
-| anything else (native-Wayland apps such as Claude Desktop, or a session with no terminal window) | Glint opens a terminal at the folder (GNOME Terminal, kgx or Ptyxis); if none is available it copies `cd '<folder>'` to the clipboard and shows the folder and tty |
+| anything else (native-Wayland apps such as Claude Desktop, or a session with no terminal window) | Glint opens a terminal at the folder (GNOME Terminal, kgx or Ptyxis). For OpenCode it resumes the same session in its TUI (`opencode --session <id>`) instead of a bare shell; if no terminal is available it copies `cd '<folder>'` and shows the folder and tty |
 
 `GLINT_ORIGIN=0` stops capturing origins; `GLINT_TITLE` sets a title for MCP calls. The last prompt is never written to logs (the hook log redacts it).
 

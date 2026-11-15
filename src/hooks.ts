@@ -815,6 +815,10 @@ export async function runHook(
   const agent = harnessName(harness);
   const project = projectLabel(input.cwd);
   const origin = env.GLINT_ORIGIN === "0" ? undefined : captureOrigin({ cwd: input.cwd, title: lastUserPrompt(payload) }, { ...defaultOriginDeps(), env });
+  if (origin) {
+    origin.harness = harness;
+    if (input.session) origin.session = input.session.slice(0, 200);
+  }
   const identity = {
     agent,
     project,
