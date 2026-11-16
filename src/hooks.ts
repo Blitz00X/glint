@@ -873,7 +873,7 @@ export async function runHook(
     clearChain(stateDir, key, now());
     try {
       await deps.notify({
-        message: `Stopped after ${chain} hook continuations in a row (GLINT_HOOK_MAX_CHAIN=${maxChain}). Answer in the terminal to go on.`,
+        message: `Stopped after ${chain} hook continuations in a row (GLINT_HOOK_MAX_CHAIN=${maxChain}). Answer in the terminal to go on, or set GLINT_HOOK_MAX_CHAIN=0 to remove the cap.`,
         ...identity,
       });
     } catch {
