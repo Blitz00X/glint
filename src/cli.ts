@@ -23,6 +23,7 @@ import { HARNESSES, parseHarness, parseHookEvent, readStdin, runHook } from "./h
 import { applyInstall, INSTALL_TARGETS, parseInstallTarget, planInstall, planUninstall, renderPlan } from "./install.js";
 import { createGlintServer, serveMcpHttp } from "./mcp.js";
 import { packageRoot } from "./paths.js";
+import { demoGuide, isWsl } from "./platform.js";
 import { formatAskResult, GlintError, LAYOUT_MODES, parseLayout, type OverlayLayout } from "./protocol.js";
 
 const HELP = `Glint — holographic prompts for AI coding agents
@@ -213,6 +214,7 @@ async function layoutCommand(args: ReturnType<typeof parseArgs>): Promise<void> 
 }
 
 async function demoCommand(): Promise<void> {
+  for (const line of demoGuide(isWsl())) console.error(line);
   console.error("Starting the Glint overlay…");
   const info = await ensureDaemon();
   console.error(`Overlay is up on 127.0.0.1:${info.port}. Answer the calls — results print here.`);
@@ -242,6 +244,16 @@ async function demoCommand(): Promise<void> {
     session: "demo-claude-1",
     kind: "stop",
   });
+  // A demo is explicitly interactive: focus the first panel so the person can
+  // answer with 1–9 straight away instead of guessing that they must click.
+  void (async () => {
+    await delay(900);
+    try {
+      await focusOverlay();
+    } catch (error) {
+      console.error(`could not focus the first panel: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  })();
   await delay(400);
   const second = askUser({
     question: "Approve this tool call?\nBash: git push --force-with-lease origin feat/holocall",

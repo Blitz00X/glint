@@ -4,6 +4,13 @@ Earlier releases are recorded in Git tags (`v0.3.0`, `v0.3.1`).
 
 ## Unreleased
 
+### Added
+
+- **WSLg guidance:** `glint doctor` detects WSL and reports whether the
+  PulseAudio server is reachable; `glint demo` prints the controls and focuses
+  its first panel, so `1`–`9`/Enter work without guessing that the panel must
+  be clicked. The README documents the WSL hotkey and audio limits.
+
 ### Fixed
 
 - **Focus with a native Wayland app in front:** GNOME refuses to activate an

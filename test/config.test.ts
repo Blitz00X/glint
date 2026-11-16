@@ -120,4 +120,24 @@ test("doctor reports layout source, harness install state and daemon status", as
   assert.equal(by("config.json")!.level, "ok");
   assert.equal(by("claude")!.level, "info");
   assert.match(by("claude")!.detail, /glint install claude --write/);
+  assert.equal(by("audio")!.level, "ok");
+  assert.equal(by("wsl"), undefined);
+});
+
+test("doctor explains the WSLg hotkey and audio limits", async () => {
+  const home = tmp();
+  const gHome = tmp();
+  const checks = await runDoctor({
+    home,
+    glintHome: gHome,
+    env: { DISPLAY: ":0", WSL_DISTRO_NAME: "Ubuntu" },
+    daemon: async () => null,
+    run: (_cmd, args) => (args[0] === "info" ? null : "true"),
+    electron: () => "/x/electron",
+  });
+  const by = (label: string) => checks.find((check) => check.label === label);
+  assert.equal(by("wsl")!.level, "info");
+  assert.match(by("wsl")!.detail, /glint focus/);
+  assert.equal(by("audio")!.level, "info");
+  assert.match(by("audio")!.detail, /PULSE_SERVER/);
 });

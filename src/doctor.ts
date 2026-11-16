@@ -6,6 +6,7 @@ import { configPath, readConfig, resolveStartLayout } from "./config.js";
 import { HARNESSES, type Harness } from "./hooks.js";
 import { claudeDesktopConfigPath } from "./install.js";
 import { glintHome } from "./paths.js";
+import { isWsl } from "./platform.js";
 import type { DaemonInfo } from "./protocol.js";
 
 export type CheckLevel = "ok" | "warn" | "fail" | "info";
@@ -97,6 +98,12 @@ export async function runDoctor(deps: DoctorDeps = {}): Promise<Check[]> {
     const display = env.DISPLAY || env.WAYLAND_DISPLAY;
     add(display ? "ok" : "warn", "display", display ? `DISPLAY=${env.DISPLAY ?? ""} WAYLAND_DISPLAY=${env.WAYLAND_DISPLAY ?? ""}` : "no DISPLAY/WAYLAND_DISPLAY; the overlay falls back to :0");
     if (env.WAYLAND_DISPLAY) add("info", "wayland", "the overlay runs through XWayland (--ozone-platform=x11); set GLINT_OZONE_PLATFORM to override");
+    if (isWsl(env)) add("info", "wsl", "WSLg: X11 global hotkeys do not receive keys from Windows; click a panel or run `glint focus`; audio needs the WSLg PulseAudio server (Windows 11)");
+    if (env.GLINT_MUTE === "1") add("info", "audio", "muted by GLINT_MUTE=1");
+    else {
+      const pulse = run("pactl", ["info"]);
+      add(pulse ? "ok" : "info", "audio", pulse ? "PulseAudio reachable; call sounds can play" : "PulseAudio not reachable; call sounds may be silent (WSLg needs Windows 11 and PULSE_SERVER)");
+    }
   }
 
   const info = deps.daemon ? await deps.daemon().catch(() => null) : null;

@@ -98,6 +98,14 @@ Notes:
 - **OpenCode.** OpenCode 2.x gets a V2 plugin (`experimental.idle` hook, answer injected into the same session); 1.x gets the classic `session.idle` plugin. Restart OpenCode (and any `opencode serve` service) after installing. The plugin lives in OpenCode's server, so it works in the TUI and with `opencode serve` + `opencode run --attach`; a bare `opencode run` exits as soon as the session idles.
 - **Restart** running agent sessions so they pick up the new MCP server and hooks.
 
+### Windows (WSL)
+
+Glint runs in WSLg, but WSLg is not a full Linux desktop:
+
+- **Global shortcuts do not work while a Windows app is focused.** `Ctrl+Shift+G/F/L` are X11 grabs inside the WSL display; Windows does not pass them to the Linux guest. Click the panel, or run `glint focus` in a WSL terminal (bind that command to a Windows shortcut if you want a hotkey). `glint demo` focuses its first panel and prints these controls.
+- **Sounds need the WSLg PulseAudio server** (Windows 11). `glint doctor` reports `audio` and `wsl`; if PulseAudio is not reachable, the overlay still works, silently.
+- The panel is a normal WSLg window: keep it visible on the Windows desktop, and use the WSL terminal for `glint focus`, `glint feed` and `glint doctor`.
+
 ### Manual MCP setup
 
 Any MCP client can launch Glint over stdio:
