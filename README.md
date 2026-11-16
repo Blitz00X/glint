@@ -152,7 +152,7 @@ Cursor uses the same JSON in `.cursor/mcp.json` (add `"type": "stdio"`). Streama
 
 - **No made-up buttons.** A Stop call shows the agent's last message. If it ends with a clear option list next to a question (`1. …`, `a) …`, `- …`), those options become the numbered choices; otherwise you just type.
 - **Stopping.** Dismiss (Esc), let it time out, or type a short stop (`that's all`, `stop`, `done`, `dur`, `yeter`, `bu kadar`, `bitti`) and the agent stops. Anything else is sent back as your next message.
-- **Never hangs, never loops.** Calls time out (`GLINT_HOOK_TIMEOUT_MS`, default 10 min); a down daemon lets the agent stop; continuations are capped (`GLINT_HOOK_MAX_CHAIN`, default 8); and if the agent's last action was already a Glint `ask_user`, the hook stays quiet instead of ringing twice.
+- **Never hangs, never loops.** Calls time out (`GLINT_HOOK_TIMEOUT_MS`, default 10 min); a down daemon lets the agent stop; continuations are capped (`GLINT_HOOK_MAX_CHAIN`, default 50; set `0` to disable the cap for a long manual conversation); and if the agent's last action was already a Glint `ask_user`, the hook stays quiet instead of ringing twice.
 - **Questions written in the terminal.** Agents sometimes type their question ("Should I…?", "Postgres mi SQLite mı?", a numbered list of options, "I'm blocked on…") and stop instead of calling `ask_user`. The Stop/idle hook detects this and rings a real question call: the body is the agent's own question (the tail of its message), the options it listed become buttons, and the text box stays. Your answer goes back as the next message. `GLINT_DETECT_QUESTIONS=0` turns this off (the call then rings as a plain stop).
 - **Built-in ask tools.** Claude Code's `AskUserQuestion`, Codex's `request_user_input`, Antigravity's blocking `notify_user` and OpenCode's `question` tool are rung in Glint first (PreToolUse hook / OpenCode plugin). Answer there and the agent gets your answer; dismiss it and the harness asks in the terminal as usual. `GLINT_ASK_TOOLS=0` turns this off.
 - Claude Code labels a blocking Stop hook as "Stop hook error" in its UI; that is cosmetic.
@@ -220,7 +220,7 @@ optional; install it for the fastest path (`sudo apt install xdotool`).
 | `GLINT_JUMP_HOTKEY` | `Ctrl+Shift+J` | Accelerator for jumping to the active call's source. |
 | `GLINT_MUTE` | off | `1` silences call sounds. |
 | `GLINT_HOOK_TIMEOUT_MS` | `600000` | How long a Stop call rings. |
-| `GLINT_HOOK_MAX_CHAIN` | `8` | Max continuations in a row. |
+| `GLINT_HOOK_MAX_CHAIN` | `50` | Max continuations in a row. `0` disables the cap. |
 | `GLINT_APPROVAL_TIMEOUT_MS` | `120000` | How long a PreToolUse approval call rings. |
 | `GLINT_HOTKEY` / `GLINT_FEED_HOTKEY` / `GLINT_PICKER_HOTKEY` | `Ctrl+Shift+G` / `Ctrl+Shift+F` / `Ctrl+Shift+L` | Electron accelerators. |
 | `GLINT_HOOK_LOG` | off | `1` appends a **redacted** copy of every hook payload to `~/.glint/hook-payloads.jsonl` (mode `0600`) for debugging. Prompts, assistant messages, transcript paths, `cwd`, tool input and any other free text become `<redacted:N chars>`; only numbers, booleans and enum-like fields (event name, stop flags, chain counters) are kept. Delete the file when done. |

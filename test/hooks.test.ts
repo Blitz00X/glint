@@ -9,6 +9,7 @@ import { createDaemon } from "../src/daemon.js";
 import {
   lastToolWasGlintAsk,
   APPROVAL_CHOICES,
+  DEFAULT_MAX_CHAIN,
   normalizeHookInput,
   parseHarness,
   parseHookEvent,
@@ -145,6 +146,20 @@ test("loop guard: stop_hook_active chains stop at GLINT_HOOK_MAX_CHAIN, a fresh 
   assert.equal(fresh.action, "continue");
 });
 
+test("loop guard default leaves room for a long manual conversation", () => {
+  assert.equal(DEFAULT_MAX_CHAIN, 50);
+});
+
+test("loop guard: GLINT_HOOK_MAX_CHAIN=0 disables the cap", async () => {
+  const { deps, asked, notified } = fakeDeps(answered("next"), { GLINT_HOOK_MAX_CHAIN: "0" });
+  for (let turn = 0; turn < 12; turn++) {
+    const outcome = await runHook("claude", "stop", claudeStop({ stop_hook_active: turn > 0 }), deps);
+    assert.equal(outcome.action, "continue", `turn ${turn + 1}`);
+  }
+  assert.equal(asked.length, 12);
+  assert.equal(notified.length, 0);
+});
+
 test("a hook never hangs: the deadline aborts the ask and lets the agent stop", async () => {
   let aborted = false;
   const { deps } = fakeDeps(
@@ -203,7 +218,7 @@ test("agy Stop: only a normal end of turn opens a call; executionNum drives the 
   assert.equal(cancel.asked.length, 0);
 
   // agy 1.5.x keeps continuationActive=false; executionNum counts Stop runs in the turn.
-  const keep = fakeDeps(answered("Keep going", 0));
+  const keep = fakeDeps(answered("Keep going", 0), { GLINT_HOOK_MAX_CHAIN: "8" });
   const base = { conversationId: "c-2", cwd: "/w/p", terminationReason: "NO_TOOL_CALL", continuationActive: false, response: "READY" };
   for (let n = 0; n < 8; n++) {
     const r = await runHook("agy", "stop", JSON.stringify({ ...base, executionNum: n }), keep.deps);

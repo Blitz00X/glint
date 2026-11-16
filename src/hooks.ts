@@ -317,7 +317,7 @@ export const APPROVAL_CHOICES = ["Allow", "Deny", "Decide in the terminal"] as c
 
 export const DEFAULT_HOOK_TIMEOUT_MS = 10 * 60_000;
 export const DEFAULT_APPROVAL_TIMEOUT_MS = 2 * 60_000;
-export const DEFAULT_MAX_CHAIN = 8;
+export const DEFAULT_MAX_CHAIN = 50;
 /** A chain counter older than this is treated as a fresh conversation. */
 export const CHAIN_RESET_MS = 30 * 60_000;
 
@@ -863,7 +863,11 @@ export async function runHook(
   }
   const stateDir = deps.stateDir ?? glintHome();
   const key = `${harness}:${input.session || input.cwd}`;
-  const maxChain = envNumber(env, "GLINT_HOOK_MAX_CHAIN", DEFAULT_MAX_CHAIN);
+  // 0 is an explicit opt-out for people who drive a long conversation by hand;
+  // the default stays a last-resort brake for unattended/runaway hooks.
+  const maxChain = env.GLINT_HOOK_MAX_CHAIN === "0"
+    ? Number.POSITIVE_INFINITY
+    : envNumber(env, "GLINT_HOOK_MAX_CHAIN", DEFAULT_MAX_CHAIN);
   const chain = currentChain(stateDir, key, input, harness, now());
   if (chain >= maxChain) {
     clearChain(stateDir, key, now());

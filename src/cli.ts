@@ -74,7 +74,7 @@ Environment
   GLINT_HOOK          Set to 0 to make every hook a no-op
   GLINT_HOOK_TIMEOUT_MS      How long a Stop hook rings. Default: 600000
   GLINT_APPROVAL_TIMEOUT_MS  How long an approval call rings. Default: 120000
-  GLINT_HOOK_MAX_CHAIN       Max continuations in a row before a hook lets go. Default: 8
+  GLINT_HOOK_MAX_CHAIN       Max continuations in a row before a hook lets go. Default: 50; 0 disables the cap
 `;
 
 async function main(argv: string[]): Promise<void> {

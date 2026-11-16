@@ -4,6 +4,13 @@ Earlier releases are recorded in Git tags (`v0.3.0`, `v0.3.1`).
 
 ## Unreleased
 
+### Changed
+
+- **Loop guard is a last-resort brake, not a conversation limit.** The default
+  `GLINT_HOOK_MAX_CHAIN` is now 50 instead of 8, and `0` disables the cap.
+  A person typing answers turn by turn no longer gets cut off after eight
+  continuations; unattended hooks still have a bounded chain.
+
 ### Added
 
 - **WSLg guidance:** `glint doctor` detects WSL and reports whether the
