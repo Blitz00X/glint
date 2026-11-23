@@ -60,7 +60,7 @@ export class GlintError extends Error {
 }
 
 export const askInputSchema = z.object({
-  question: z.string().trim().min(1).max(4_000),
+  question: z.string().min(1).max(20_000).refine((text) => text.trim().length > 0, "Question must not be blank"),
   choices: z.array(z.string().trim().min(1).max(240)).max(MAX_CHOICES).optional(),
   agent: z.string().trim().min(1).max(80).optional(),
   project: z.string().trim().min(1).max(120).optional(),
@@ -76,7 +76,7 @@ export const askInputSchema = z.object({
 export type AskInput = z.infer<typeof askInputSchema>;
 
 export const notifyInputSchema = z.object({
-  message: z.string().trim().min(1).max(2_000),
+  message: z.string().min(1).max(20_000).refine((text) => text.trim().length > 0, "Message must not be blank"),
   agent: z.string().trim().min(1).max(80).optional(),
   project: z.string().trim().min(1).max(120).optional(),
   durationMs: z.number().int().min(500).max(120_000).optional(),

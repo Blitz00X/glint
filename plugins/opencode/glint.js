@@ -62,8 +62,7 @@ function textOf(parts) {
   return (parts || [])
     .filter((part) => part && part.type === "text" && typeof part.text === "string" && !part.synthetic)
     .map((part) => part.text)
-    .join("\n")
-    .trim();
+    .join("\n");
 }
 
 export const GlintPlugin = async ({ client, directory }) => {
@@ -72,7 +71,7 @@ export const GlintPlugin = async ({ client, directory }) => {
   const ours = new Set(); // sessionIDs whose next user message is our injected answer
 
   // Last assistant text, and whether the agent's last tool call in this turn
-  // was Glint's ask_user (then it already called you; don't ring twice).
+  // was Glint's ask_user (metadata only; Stop still shows the final text).
   async function lastTurn(sessionID) {
     let text = "";
     let consulted = false;

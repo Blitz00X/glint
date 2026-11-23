@@ -380,6 +380,12 @@ body[data-layout="deneme2"] .live {
   font-size: 12px;
 }
 
+body[data-layout="deneme2"] .panel.call:not(.on-hold) .call-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+
 body[data-layout="deneme2"] .question,
 body[data-layout="deneme2"] .notice-copy {
   flex: 1 1 auto;
@@ -988,7 +994,7 @@ body[data-layout="deneme3"][data-badge="open"] .notice-hint {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   max-height: 180px;
-  overflow: hidden;
+  overflow: auto;
   background: color-mix(in srgb, var(--accent) 8%, rgba(255, 255, 255, 0.02));
   border-left: 2px solid var(--accent);
 }

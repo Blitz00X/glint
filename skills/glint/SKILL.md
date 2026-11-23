@@ -1,6 +1,6 @@
 ---
 name: glint
-description: Reach the user through the Glint holocall overlay instead of silently waiting in the terminal. Use whenever you finish a task, get blocked on a decision, need approval, or want to post a progress update while the user is not looking at this terminal.
+description: Use Glint for questions that must be answered in the middle of work and for progress updates. At the end of a turn, write the full reply and stop; the Stop hook shows it verbatim.
 ---
 
 # Glint
@@ -11,25 +11,23 @@ user answers with 1–9, Enter, or free text, and the answer comes straight back
 to you as the tool result. Every call and notice also lands in one shared
 group-chat feed, so the user can see what all their agents said.
 
-The user runs many agents in the background. **If you stop without calling
-Glint, nobody notices you are waiting.** Never ask the user in plain text
-(no "should I…?" or option lists in your reply): always call `ask_user`. If
-you finish or are blocked, still call `ask_user` with the open issues listed.
+At the end of a turn (finished, blocked, or needs a decision), write your full
+reply as normal output, then stop without calling `ask_user`. The Stop hook
+rings Glint with your complete last message verbatim, including any question
+and choices in that reply.
 
 ## When to call
 
-| Situation | Tool | Example |
-|---|---|---|
-| You finished the task | `ask_user` | "Done: 14 tests pass, PR branch pushed. What next?" choices: `Open the PR`, `Write docs`, `Stop here` |
-| You are blocked on a decision | `ask_user` | "Migration needs a NOT NULL column. How?" choices: `Backfill then constrain`, `Default value`, `Skip` |
-| You need approval for something risky | `ask_user` | "About to delete 3 stale branches. OK?" choices: `Yes`, `No` |
-| Progress the user might like to see | `notify` | "Halfway: API done, starting the UI." |
+Use `ask_user` only in the middle of work when you must wait for an answer
+before continuing. First write the question in your output, then pass the
+exact same text as `question`. Continue with the answer. Use `notify` for
+progress or FYI updates that need no reply.
 
 ## How to call
 
 `ask_user` arguments:
 
-- `question` (required): first a one-line summary of where you are, then the question. Keep it under ~400 characters.
+- `question` (required): the exact same text as the question you already wrote in your output (up to 20,000 characters).
 - `choices` (optional, ≤ 9): short labels, best 2–4. The user can still type a free answer.
 - `agent`: your product name — "Claude Code", "Codex", "OpenCode", "Antigravity", "Cursor".
 - `project`: repo or folder name.
@@ -46,12 +44,10 @@ Tool names differ by harness: `ask_user`, `glint_ask_user` (OpenCode), `mcp__gli
 
 ## Safety net
 
-Glint also installs lifecycle hooks (`glint install <harness>`) that ring the
-user when you stop even if you forget to call: a question left in plain text is
-turned into a call, and built-in ask tools (Claude's `AskUserQuestion`, Codex's
-`request_user_input`) are answered through Glint. Calling `ask_user` yourself
-is still better: you write the question and choices instead of a hook guessing
-them from your last message.
+Glint installs lifecycle hooks (`glint install <harness>`) that ring after your
+normal reply. The call body is your complete last message; detected questions
+and options only determine buttons and call kind. Built-in ask tools (Claude's
+`AskUserQuestion`, Codex's `request_user_input`) can also be answered through Glint.
 
 ## Short rule for AGENTS.md / CLAUDE.md
 

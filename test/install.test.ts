@@ -3,8 +3,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import childProcess from "node:child_process";
+import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
+import { syncBuiltinESMExports } from "node:module";
 import { pathToFileURL } from "node:url";
-import { applyInstall, jsoncWithoutComments, planInstall } from "../src/install.js";
+import { applyInstall, findRuleBlock, jsoncWithoutComments, planInstall, ruleText } from "../src/install.js";
 
 function home(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "glint-home-"));
@@ -180,6 +184,7 @@ test("OpenCode plugin: idle opens a call via the hook and prompts the session wi
   process.env.GLINT_CLI = fakeCli;
   const url = pathToFileURL(path.resolve(import.meta.dirname, "..", "plugins", "opencode", "glint.js")).href;
   const mod = (await import(url)) as { GlintPlugin: (input: unknown) => Promise<Record<string, (...args: unknown[]) => Promise<void>>> };
+  const message = "  # Built\n" + "Full output.\n".repeat(200) + "Deploy?\n  ";
   const prompts: unknown[] = [];
   const client = {
     session: {
@@ -187,7 +192,7 @@ test("OpenCode plugin: idle opens a call via the hook and prompts the session wi
       messages: async () => ({
         data: [
           { info: { role: "user" }, parts: [{ type: "text", text: "build it" }] },
-          { info: { role: "assistant" }, parts: [{ type: "text", text: "Built. Deploy?" }] },
+          { info: { role: "assistant" }, parts: [{ type: "text", text: message }] },
         ],
       }),
       promptAsync: async (args: unknown) => {
@@ -206,7 +211,7 @@ test("OpenCode plugin: idle opens a call via the hook and prompts the session wi
   assert.match(sent.body.parts[0]!.text, /ship it/);
   const seen = JSON.parse(fs.readFileSync(seenFile, "utf8"));
   assert.deepEqual(seen.argv, ["hook", "opencode", "session.idle"]);
-  assert.equal(seen.input.last_assistant_message, "Built. Deploy?");
+  assert.equal(seen.input.last_assistant_message, message);
   assert.equal(seen.input.cwd, "/w/shop");
   assert.equal(seen.input.chain, 0);
 
@@ -236,29 +241,41 @@ test("opencode 2.x install replaces the 1.x plugin file with the V2 one in plugi
   assert.deepEqual(parsed.plugin, ["/x/tempo.mjs"]);
 });
 
-test("opencode 2.x plugin: idle hook rings Glint and admits the reply as a synthetic message", async () => {
+test("opencode 2.x installed plugin: skips session background jobs, then rings and admits a synthetic reply", async (t) => {
   const dir = home();
   const fakeCli = path.join(dir, "fake-cli.mjs");
   const seenFile = path.join(dir, "seen.json");
-  fs.writeFileSync(
-    fakeCli,
-    `import fs from "node:fs";
-    let input = "";
-    process.stdin.on("data", (c) => (input += c));
-    process.stdin.on("end", () => {
-      fs.writeFileSync(${JSON.stringify(seenFile)}, JSON.stringify({ argv: process.argv.slice(2), input: JSON.parse(input) }));
-      process.stdout.write(JSON.stringify({ action: "continue", prompt: "The user replied through Glint: \\"go\\"." }));
-    });`,
-  );
   process.env.GLINT_NODE = process.execPath;
   process.env.GLINT_CLI = fakeCli;
-  const url = pathToFileURL(path.resolve(import.meta.dirname, "..", "plugins", "opencode", "glint-v2.js")).href + "?v2test";
+  // Mock only the CLI process boundary: this exercises the installed plugin's
+  // actual idle handler even in sandboxes that prohibit spawning children.
+  const spawn = t.mock.method(childProcess, "spawn", (_node: string, argv: string[]) => {
+    const child = Object.assign(new EventEmitter(), { stdin: new PassThrough(), stdout: new PassThrough(), kill() {} });
+    let raw = "";
+    child.stdin.on("data", (chunk) => { raw += chunk; });
+    child.stdin.on("end", () => {
+      fs.writeFileSync(seenFile, JSON.stringify({ argv: argv.slice(1), input: JSON.parse(raw) }));
+      child.stdout.write(JSON.stringify({ action: "continue", prompt: 'The user replied through Glint: "go".' }));
+      child.emit("close", 0);
+    });
+    return child;
+  });
+  syncBuiltinESMExports();
+  t.after(() => {
+    spawn.mock.restore();
+    syncBuiltinESMExports();
+    delete process.env.GLINT_NODE;
+    delete process.env.GLINT_CLI;
+  });
+  applyInstall(planInstall("opencode", { ...opts(dir), node: process.execPath, cli: fakeCli, opencodeMajor: 2 }));
+  const url = pathToFileURL(path.join(dir, ".config", "opencode", "plugin", "glint.js")).href;
   const mod = (await import(url)) as { default: { setup: (ctx: unknown) => Promise<() => void> } };
   let idleHook: ((e: unknown) => Promise<void>) | null = null;
+  const message = "  # Done\r\n" + "Full output.\n".repeat(200) + "Ship it?\n  ";
   const synthetic: unknown[] = [];
   const events: unknown[] = [
     { type: "session.execution.started", data: { sessionID: "s1" } },
-    { type: "session.text.ended", data: { sessionID: "s1", text: "Done. Ship it?" } },
+    { type: "session.text.ended", data: { sessionID: "s1", text: message } },
   ];
   const ctx = {
     location: { directory: "/w/shop" },
@@ -282,9 +299,16 @@ test("opencode 2.x plugin: idle hook rings Glint and admits the reply as a synth
   };
   const cleanup = await mod.default.setup(ctx);
   await new Promise((r) => setTimeout(r, 20));
-  await idleHook!({ sessionID: "s1", background: [] });
+  for (let n = 0; n < 3; n++) await idleHook!({ sessionID: "s1", background: [{ sessionID: "s1" }] });
+  assert.equal(fs.existsSync(seenFile), false, "no Glint subprocess for a pending job");
+  assert.equal(synthetic.length, 0);
+  await idleHook!({ sessionID: "s1", background: [{ sessionID: "other-session" }] });
   const first = JSON.parse(fs.readFileSync(seenFile, "utf8"));
   assert.equal(first.input.glint_consulted, false);
+  assert.equal(first.input.chain, 0, "skipped idles never advance the chain");
+  assert.equal(first.input.last_assistant_message, message);
+  await idleHook!({ sessionID: "s1", background: [{ sessionID: "s1" }] });
+  assert.equal(synthetic.length, 1, "background idle after continuation does not call again");
   // A code-mode "execute" tool that calls glint.ask_user counts as asking.
   events.push(
     { type: "session.execution.started", data: { sessionID: "s2" } },
@@ -300,7 +324,7 @@ test("opencode 2.x plugin: idle hook rings Glint and admits the reply as a synth
   cleanup();
   const seen = JSON.parse(fs.readFileSync(seenFile, "utf8"));
   assert.deepEqual(seen.argv.slice(-2), ["opencode", "session.idle"]);
-  assert.equal(seen.input.last_assistant_message, "Done. Ship it?");
+  assert.equal(seen.input.last_assistant_message, message);
   assert.equal(seen.input.cwd, "/w/shop");
   assert.deepEqual(synthetic[0], { sessionID: "s1", text: 'The user replied through Glint: "go".', description: "Reply through Glint" });
 });
@@ -337,4 +361,25 @@ test("codex-desktop: same files as codex, with a note", async () => {
   assert.deepEqual(a.steps.map((s) => s.file), b.steps.map((s) => s.file));
   assert.equal(a.harness, "codex-desktop");
   assert.match(a.notes[0]!, /app-server/);
+});
+
+test("old Glint rules upgrade in place with or without an end marker", () => {
+  const old = fs.readFileSync(path.join(import.meta.dirname, "fixtures/glint-rule-before-verbatim.md"), "utf8").trim();
+  for (const ending of ["", "\n<!-- /glint:rule -->"]) {
+    const block = "<!-- glint:rule -->\n" + old + ending;
+    const text = "# My rules\n\n" + block + "\n\n## Keep this\nOther rules.\n";
+    const found = findRuleBlock(text);
+    assert.ok(found);
+    assert.equal(text.slice(found.start, found.end), block);
+    const h = home();
+    fs.mkdirSync(path.join(h, ".codex"));
+    const file = path.join(h, ".codex/AGENTS.md");
+    fs.writeFileSync(file, text);
+    // Review the install plan only; do not install into a real harness.
+    const change = planInstall("codex", opts(h)).steps.find((c) => c.file === file);
+    assert.ok(change);
+    assert.ok(change.content!.includes(ruleText()));
+    assert.ok(change.content!.endsWith("## Keep this\nOther rules.\n"));
+    assert.equal(change.content!.split("<!-- glint:rule -->").length, 2);
+  }
 });

@@ -161,3 +161,18 @@ test("daemon layout defaults to deneme1 and switches to deneme2 and deneme3 via 
     }
   });
 });
+
+test("long Stop output survives HTTP validation, sink and feed verbatim", async () => {
+  await withDaemon(async ({ home, daemon, seen }) => {
+    // Control characters expand sixfold in JSON, exceeding the old HTTP cap.
+    const question = "  " + "\u0001".repeat(19996) + "  ";
+    const pending = askUser({ question, kind: "stop" }, { home, spawn: false });
+    await waitFor(() => seen.length === 1, "long call should reach the sink");
+    const call = daemon.pending()[0]!;
+    assert.equal(call.question, question);
+    assert.equal(seen[0]!.question, question);
+    assert.equal(daemon.events()[0]!.text, question);
+    daemon.settle({ id: call.id, status: "dismissed" });
+    assert.equal((await pending).status, "dismissed");
+  });
+});

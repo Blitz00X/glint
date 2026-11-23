@@ -52,6 +52,80 @@ function runHook(event, payload, signal) {
 
 export const isGlintAsk = (call) => /glint/i.test(String(call || "")) && /ask_user/i.test(String(call || ""));
 
+// Standalone installed plugin: same executable/flag rules as src/suppress.ts.
+const baseName = (token) => String(token || "").split(/[\\/]/).pop() || "";
+
+export function isHeadlessProcess(entry) {
+  const argv = entry.argv;
+  const first = baseName(argv[0] ?? "").toLowerCase();
+  const runtime = /^(node|nodejs|bun|python[0-9.]*)$/.test(first);
+  const index = runtime ? 1 : 0;
+  const executable = baseName(argv[index] ?? "").toLowerCase().replace(/\.(?:js|mjs|cjs)$/, "");
+  const flags = {
+    claude: ["-p", "--print"], agy: ["-p", "--print"], gemini: ["-p", "--prompt"],
+  };
+  const command = executable === "codex" ? "exec" : executable === "opencode" ? "run" : undefined;
+  if (!command && !flags[executable]) return false;
+  const valued = new Set([
+    "-c", "--config", "-C", "--cd", "--cwd", "-m", "--model", "--profile", "--provider",
+    "--session", "--session-id", "--resume", "--permission-mode", "--output-format", "--input-format",
+    "--system-prompt", "--append-system-prompt", "--settings", "--allowedTools", "--disallowedTools",
+    "--sandbox", "--ask-for-approval", "-a", "--add-dir", "--directory", "--agent", "--log-level",
+  ]);
+  const switches = new Set([
+    "--json", "--verbose", "--debug", "--full-auto", "--dangerously-bypass-approvals-and-sandbox",
+    "--dangerously-skip-permissions", "--yolo", "--continue", "--skip-git-repo-check",
+  ]);
+  for (let i = index + 1; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg === "--") return false;
+    if (command && arg === command) return true;
+    const flag = arg.split("=", 1)[0];
+    if (flags[executable]?.includes(flag)) return true;
+    if (valued.has(flag)) {
+      if (!arg.includes("=")) i++;
+      continue;
+    }
+    if (switches.has(arg)) continue;
+    return false;
+  }
+  return false;
+}
+
+function readProcess(pid) {
+  try {
+    const stat = fs.readFileSync(`/proc/${pid}/stat`, "utf8");
+    const close = stat.lastIndexOf(")");
+    const comm = stat.slice(stat.indexOf("(") + 1, close);
+    const ppid = Number(stat.slice(close + 2).split(" ")[1]);
+    let argv = [];
+    try { argv = fs.readFileSync(`/proc/${pid}/cmdline`, "utf8").split("\0").filter(Boolean); } catch {}
+    return { comm, ppid, argv };
+  } catch { return null; }
+}
+
+export function deliveryMode({ env = process.env, ppid = process.pid, proc = readProcess } = {}) {
+  if (env.GLINT_SUPPRESS === "1" || String(env.AGENTOS_TRANSPORT || "").trim().toLowerCase() === "takopi") return "off";
+  let headless = false;
+  let pid = ppid;
+  // Include this process: OpenCode itself can be `opencode run`.
+  for (let i = 0; i < 24 && pid > 1; i++) {
+    const entry = proc(pid);
+    if (!entry) break;
+    const { argv, comm } = entry;
+    const base = (value) => baseName(value).toLowerCase();
+    if (base(comm) === "takopi" || argv.slice(0, 2).some((arg) => base(arg) === "takopi") ||
+        ((argv[1] === "-m" || argv[1] === "run") && base(argv[2]) === "takopi")) return "off";
+    headless ||= isHeadlessProcess(entry);
+    pid = entry.ppid;
+  }
+  if (["ring", "notify", "off"].includes(env.GLINT_MODE)) return env.GLINT_MODE;
+  return headless ? "off" : "ring";
+}
+
+// Compatibility export for callers checking whether this plugin stays inert.
+export const fromTakopi = (env = process.env) => deliveryMode({ env }) === "off";
+
 // OpenCode may set the plugin up more than once in one process (e.g. global +
 // project scope); only one copy may ring for a given session or form.
 const local = (globalThis.__glintInflight ??= new Set());
@@ -96,7 +170,7 @@ export default {
     // there, that is the tool's result. Dismiss/timeout falls back to the
     // normal question form in the terminal.
     async function ringQuestion(sessionID, input, signal) {
-      if (process.env.GLINT_HOOK === "0" || process.env.GLINT_ASK_TOOLS === "0") return null;
+      if (deliveryMode() !== "ring" || process.env.GLINT_HOOK === "0" || process.env.GLINT_ASK_TOOLS === "0") return null;
       const questions = Array.isArray(input?.questions) ? input.questions : [];
       if (questions.length === 0) return null;
       const out = await runHook(
@@ -130,6 +204,7 @@ export default {
         tools.update("question", (tool) => {
           const original = tool.execute;
           tool.execute = async (input, toolCtx) => {
+            if (deliveryMode() !== "ring") return original(input, toolCtx);
             const key = `question:${toolCtx?.sessionID}:${toolCtx?.id ?? toolCtx?.callID ?? JSON.stringify(input).length}`;
             // Another copy of this plugin is already ringing (or fell back): just run the tool.
             if (!inflight.claim(key)) return original(input, toolCtx);
@@ -182,7 +257,7 @@ export default {
     })().catch(() => {});
 
     await ctx.session.hook("experimental.idle", async (idle) => {
-      if (process.env.GLINT_HOOK === "0") return;
+      if (deliveryMode() === "off" || process.env.GLINT_HOOK === "0") return;
       const sessionID = idle?.sessionID;
       if (!sessionID) return;
       if (Array.isArray(idle.background) && idle.background.some((job) => job.sessionID === sessionID)) return; // it will wake again

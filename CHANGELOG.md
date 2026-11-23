@@ -13,12 +13,35 @@ Earlier releases are recorded in Git tags (`v0.3.0`, `v0.3.1`).
 
 ### Added
 
+- **Headless delivery modes:** `GLINT_MODE=ring|notify|off` selects delivery per
+  hook/MCP call. Headless Codex, Claude, agy, Gemini and OpenCode ancestors
+  default to `off`; explicit modes override detection, while suppression and
+  Takopi remain silent. `notify` shows the complete final reply verbatim
+  (up to 20,000 characters), returns normal Stop output, and preserves agy's
+  pending-background-task guard. Ask tools/approvals defer to the harness in
+  non-ring modes; MCP asks return dismissed with reply guidance. The OpenCode
+  v2 plugin applies the same modes.
+
 - **WSLg guidance:** `glint doctor` detects WSL and reports whether the
   PulseAudio server is reachable; `glint demo` prints the controls and focuses
   its first panel, so `1`–`9`/Enter work without guessing that the panel must
   be clicked. The README documents the WSL hotkey and audio limits.
 
 ### Fixed
+
+- **Antigravity background-task stops:** Stop goes idle while the current user
+  turn has a transcript-confirmed running task without a matching system
+  completion. After completion, the final reply rings verbatim. Missing or
+  ambiguous transcript evidence still rings. Skipped stops do not advance the
+  continuation limit; agy's `executionNum` only resets a new turn. OpenCode v2's
+  existing background-job guard is also tested through the installed plugin path.
+
+- **Final replies match Glint calls:** agents write their full reply and stop;
+  the Stop hook shows that text verbatim for Claude Code, Codex, OpenCode and
+  Antigravity, even after a mid-work `ask_user`. Question detection only derives
+  buttons and call kind. Calls preserve whitespace and support 20,000 characters;
+  long panel and feed messages scroll. Mid-work questions must be written first
+  and passed unchanged to `ask_user`. Install upgrades the previous rule in place.
 
 - **Focus with a native Wayland app in front:** GNOME refuses to activate an
   XWayland window while Brave, GNOME Terminal or another native app owns the

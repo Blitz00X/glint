@@ -25,6 +25,7 @@ import { createGlintServer, serveMcpHttp } from "./mcp.js";
 import { packageRoot } from "./paths.js";
 import { demoGuide, isWsl } from "./platform.js";
 import { formatAskResult, GlintError, LAYOUT_MODES, parseLayout, type OverlayLayout } from "./protocol.js";
+import { glintSuppressed } from "./suppress.js";
 
 const HELP = `Glint — holographic prompts for AI coding agents
 
@@ -72,6 +73,8 @@ Environment
   GLINT_FEED_HOTKEY   Feed toggle accelerator. Default: CommandOrControl+Shift+F
   GLINT_PICKER_HOTKEY Concept picker accelerator. Default: CommandOrControl+Shift+L
   GLINT_HOOK          Set to 0 to make every hook a no-op
+  GLINT_SUPPRESS      Set to 1 to silence hooks and MCP calls in this process tree
+                      (Takopi Telegram sessions are detected automatically)
   GLINT_HOOK_TIMEOUT_MS      How long a Stop hook rings. Default: 600000
   GLINT_APPROVAL_TIMEOUT_MS  How long an approval call rings. Default: 120000
   GLINT_HOOK_MAX_CHAIN       Max continuations in a row before a hook lets go. Default: 50; 0 disables the cap
@@ -172,6 +175,11 @@ async function mcpCommand(http: boolean, portValue: string | undefined): Promise
 async function askCommand(args: ReturnType<typeof parseArgs>): Promise<void> {
   const question = args.positionals.join(" ").trim();
   if (!question) throw new GlintError("Usage: glint ask <question> [--choice <text> ...]");
+  if (glintSuppressed().suppressed) {
+    console.log("Glint is off for Takopi/Telegram sessions; put the question in your reply text instead.");
+    process.exitCode = 2;
+    return;
+  }
   const choices = args.repeated.get("choice");
   const timeout = args.options.get("timeout");
   const layout = parseLayoutOption(args.options.get("layout"));
@@ -191,6 +199,10 @@ async function askCommand(args: ReturnType<typeof parseArgs>): Promise<void> {
 async function notifyCommand(args: ReturnType<typeof parseArgs>): Promise<void> {
   const message = args.positionals.join(" ").trim();
   if (!message) throw new GlintError("Usage: glint notify <message>");
+  if (glintSuppressed().suppressed) {
+    console.log("Skipped: Glint is off for Takopi/Telegram sessions.");
+    return;
+  }
   const layout = parseLayoutOption(args.options.get("layout"));
   const result = await notifyUser({
     message,

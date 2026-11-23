@@ -152,8 +152,8 @@ Cursor uses the same JSON in `.cursor/mcp.json` (add `"type": "stdio"`). Streama
 
 - **No made-up buttons.** A Stop call shows the agent's last message. If it ends with a clear option list next to a question (`1. …`, `a) …`, `- …`), those options become the numbered choices; otherwise you just type.
 - **Stopping.** Dismiss (Esc), let it time out, or type a short stop (`that's all`, `stop`, `done`, `dur`, `yeter`, `bu kadar`, `bitti`) and the agent stops. Anything else is sent back as your next message.
-- **Never hangs, never loops.** Calls time out (`GLINT_HOOK_TIMEOUT_MS`, default 10 min); a down daemon lets the agent stop; continuations are capped (`GLINT_HOOK_MAX_CHAIN`, default 50; set `0` to disable the cap for a long manual conversation); and if the agent's last action was already a Glint `ask_user`, the hook stays quiet instead of ringing twice.
-- **Questions written in the terminal.** Agents sometimes type their question ("Should I…?", "Postgres mi SQLite mı?", a numbered list of options, "I'm blocked on…") and stop instead of calling `ask_user`. The Stop/idle hook detects this and rings a real question call: the body is the agent's own question (the tail of its message), the options it listed become buttons, and the text box stays. Your answer goes back as the next message. `GLINT_DETECT_QUESTIONS=0` turns this off (the call then rings as a plain stop).
+- **Never hangs, never loops.** Calls time out (`GLINT_HOOK_TIMEOUT_MS`, default 10 min); a down daemon lets the agent stop; continuations are capped (`GLINT_HOOK_MAX_CHAIN`, default 50; set `0` to disable the cap for a long manual conversation). A mid-work Glint `ask_user` does not suppress the final reply.
+- **Questions written in the terminal.** Agents sometimes type their question ("Should I…?", "Postgres mi SQLite mı?", a numbered list of options, "I'm blocked on…") and stop instead of calling `ask_user`. The Stop/idle hook detects this and rings a real question call: the body is the agent's complete last message verbatim (up to 20,000 characters), the options it listed become buttons, and the text box stays. Your answer goes back as the next message. `GLINT_DETECT_QUESTIONS=0` turns this off (the call then rings as a plain stop).
 - **Built-in ask tools.** Claude Code's `AskUserQuestion`, Codex's `request_user_input`, Antigravity's blocking `notify_user` and OpenCode's `question` tool are rung in Glint first (PreToolUse hook / OpenCode plugin). Answer there and the agent gets your answer; dismiss it and the harness asks in the terminal as usual. `GLINT_ASK_TOOLS=0` turns this off.
 - Claude Code labels a blocking Stop hook as "Stop hook error" in its UI; that is cosmetic.
 
@@ -206,11 +206,45 @@ back to `python3` + libX11), so typing reaches the panel anyway. With no live
 call, the shortcut opens the group feed instead of doing nothing. `xdotool` is
 optional; install it for the fastest path (`sudo apt install xdotool`).
 
+## Headless runs
+
+Glint resolves delivery for each hook or MCP call:
+
+- `ring`: interactive terminal and app sessions use the usual holocall.
+- `notify`: Stop/idle posts the agent's full final message verbatim as a
+  non-blocking notice, then lets the agent stop. No answer is expected.
+- `off`: no call or notice. MCP `ask_user` returns `dismissed` and tells the
+  agent to put its question in the reply text.
+
+Set `GLINT_MODE=ring|notify|off` on the agent process to choose explicitly.
+`GLINT_SUPPRESS=1` and Takopi signals always force `off`, including when a mode
+is set. Otherwise, Linux process ancestry detects `codex exec`,
+`claude -p`/`--print`, `agy -p`/`--print`, `gemini -p`/`--prompt`, and
+`opencode run` and defaults them to `off`. Only executable and option positions
+are examined; prompt text is never searched. Other sessions default to `ring`.
+Unknown options or unavailable process information leave the default at `ring`;
+set the mode explicitly for unusual wrappers or non-Linux headless launches.
+
+For a detached launcher such as `kutu-agy`, set the environment on its agent
+invocation to show the result without opening an invisible continuation:
+
+```sh
+GLINT_MODE=notify agy -p "$text"
+```
+
+Both `off` and `notify` leave built-in ask tools and approvals to the harness's
+default behavior. MCP `ask_user` returns `dismissed` in either mode; `notify`
+still delivers explicit MCP notices. The OpenCode v2 plugin follows the same
+rules. Antigravity stops/notices remain silent while a transcript-confirmed
+background task is pending; only the final completed reply is shown.
+
 ## Environment variables
 
 | Variable | Default | Effect |
 |---|---|---|
 | `GLINT_HOOK` | on | `0` makes every hook a no-op (the quickest way to disable hooks everywhere). |
+| `GLINT_MODE` | auto | `ring`, `notify`, or `off`; see [Headless runs](#headless-runs). Explicit suppression and Takopi still force `off`. |
+| `GLINT_SUPPRESS` | off | `1` silences every hook, MCP call **and** `glint ask`/`notify` shell call in this process tree. Takopi Telegram sessions (`takopi` in the process ancestry, `AGENTOS_TRANSPORT=takopi`, or a `Takopi`-prefixed session title) are suppressed automatically: the person answers in Telegram, so no call rings the desktop and `ask_user` returns a note to put the question in the reply text instead. |
 | `GLINT_DND` | on (GNOME) | `0` stops Glint from pausing GNOME notification banners during calls. |
 | `GLINT_TOP_OFFSET` | `168` on Linux, `16` elsewhere | Distance in px from the top of the work area to the first panel. |
 | `GLINT_LAYOUT` | unset | Start layout: `deneme1`/`corner`, `deneme2`/`center`, `deneme3`/`badge`, `ticker`, `bubble`, `edge`, `island`. When set it wins over the picker's saved choice at start. |
@@ -227,6 +261,8 @@ optional; install it for the fastest path (`sudo apt install xdotool`).
 | `GLINT_AGENT` / `GLINT_PROJECT` | — | Default labels on the panel. |
 | `GLINT_HOME` | `~/.glint` | State directory (daemon info, token, logs, saved DND state). |
 | `GLINT_NO_SANDBOX` | off | `1` if Chromium's sandbox can't start (containers). |
+
+**Session-level mute.** `~/.glint/suppress-sessions` lists session ids, one per line (`#` comments allowed). A listed session never rings, even on a shared server where neither the process tree nor the environment can tell where the turn came from. Takopi Telegram runs are detected automatically (a `takopi` ancestor, `AGENTOS_TRANSPORT=takopi`, or a `Takopi`-prefixed session title) and do not need an entry.
 
 ### Do Not Disturb (GNOME)
 

@@ -214,10 +214,10 @@ test("install wires the ask-tool PreToolUse hooks by default and they uninstall 
   assert.ok(!after.content!.includes("hook claude"));
 });
 
-test("rule: says never ask in plain text, has an end marker, and upgrades the old rule in place", () => {
-  assert.match(ruleText(), /Never ask the user anything in plain text/);
+test("rule: says write reply then stop, has an end marker, and upgrades the old rule in place", () => {
+  assert.match(ruleText(), /write your full reply.*stop without calling `ask_user`/);
   assert.match(ruleText(), /blocked/);
-  assert.ok(ruleText().length < 1_000, "rule stays short");
+  assert.ok(ruleText().length < 1_500, "rule stays short");
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "glint-lazy-rule-"));
   const file = path.join(home, ".claude", "CLAUDE.md");
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -228,7 +228,7 @@ test("rule: says never ask in plain text, has an end marker, and upgrades the ol
   assert.ok(step.changed);
   assert.match(step.content!, /keep this/);
   assert.match(step.content!, /also keep/);
-  assert.match(step.content!, /Never ask the user anything in plain text/);
+  assert.match(step.content!, /write your full reply.*stop without calling `ask_user`/);
   assert.ok(!step.content!.includes("instead of waiting in the terminal"));
   assert.ok(findRuleBlock(step.content!));
   fs.writeFileSync(file, step.content!);

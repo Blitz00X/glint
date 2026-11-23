@@ -10,14 +10,14 @@ import {
   parseSettleInput,
 } from "../src/protocol.js";
 
-test("ask input trims text and keeps choices", () => {
+test("ask input preserves question text and trims choice labels", () => {
   const parsed = parseAskInput({
     question: "  Ship it?  ",
     choices: [" Yes ", "No"],
     agent: " Codex ",
     timeoutMs: 1500,
   });
-  assert.equal(parsed.question, "Ship it?");
+  assert.equal(parsed.question, "  Ship it?  ");
   assert.deepEqual(parsed.choices, ["Yes", "No"]);
   assert.equal(parsed.agent, "Codex");
   assert.equal(parsed.timeoutMs, 1500);
@@ -32,7 +32,7 @@ test("ask input rejects an empty question and a tenth choice", () => {
 });
 
 test("notify and settle parsers reject bad payloads", () => {
-  assert.equal(parseNotifyInput({ message: " done " }).message, "done");
+  assert.equal(parseNotifyInput({ message: " done " }).message, " done ");
   assert.throws(() => parseNotifyInput({ message: "" }), GlintError);
   assert.throws(() => parseSettleInput({ id: "", status: "answered" }), GlintError);
   assert.equal(parseSettleInput({ id: "q1", status: "dismissed" }).status, "dismissed");
@@ -89,4 +89,18 @@ test("layout parser preserves deneme1 and deneme2 presets", () => {
   assert.equal(parseNotifyInput({ message: "ok", layout: "deneme3" }).layout, "deneme3");
   const args = parseArgs(["notify", "hi", "--layout", "deneme2"]);
   assert.equal(args.options.get("layout"), "deneme2");
+});
+
+test("ask input accepts 20000 characters verbatim and rejects larger bodies", () => {
+  const question = "  " + "ğ\n".repeat(9998) + "  ";
+  assert.equal(question.length, 20000);
+  assert.equal(parseAskInput({ question }).question, question);
+  assert.throws(() => parseAskInput({ question: question + "x" }), GlintError);
+});
+
+test("notify preserves a full Stop body verbatim, including surrounding whitespace", () => {
+  const message = "  " + "x\n".repeat(9998) + "  ";
+  assert.equal(parseNotifyInput({ message }).message, message);
+  assert.throws(() => parseNotifyInput({ message: " " }), GlintError);
+  assert.throws(() => parseNotifyInput({ message: message + "x" }), GlintError);
 });

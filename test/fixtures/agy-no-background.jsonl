@@ -1,0 +1,2 @@
+{"step_index": 0, "source": "USER_EXPLICIT", "type": "USER_INPUT", "status": "DONE", "created_at": "2026-11-23T13:20:00Z", "content": "Download and verify the tool."}
+{"step_index": 5, "source": "MODEL", "type": "PLANNER_RESPONSE", "status": "DONE", "created_at": "2026-11-23T13:20:00Z", "content": "  # Kuruldu\n\nİndirildi ve doğrulandı.\n  "}

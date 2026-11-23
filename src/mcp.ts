@@ -5,6 +5,7 @@ import { z } from "zod";
 import { askUser, notifyUser, type ClientOptions } from "./client.js";
 import { captureOrigin, type Origin } from "./origin.js";
 import { projectLabel } from "./project.js";
+import { glintDeliveryMode } from "./suppress.js";
 import {
   formatAskResult,
   formatNotifyResult,
@@ -18,15 +19,27 @@ const VERSION = "0.4.0";
 
 /** Sent to the client at initialize; apps without a rules file (Claude Desktop chat) still get the rule. */
 export const SERVER_INSTRUCTIONS =
-  "The user is not watching this chat or terminal. Never ask them anything in plain text: always call ask_user (with 2-4 short choices when you can) and continue with the answer. When you finish or get blocked, call ask_user with a one-line summary and the open issues. Use notify for FYI updates.";
+  "At the end of a turn (finished, blocked, or needs a decision), write your full reply as normal output, then stop without calling ask_user. The Stop hook rings Glint with your complete last message verbatim. Only use ask_user in the middle of work when you must wait for an answer before continuing: first write the question in your output, then pass the exact same text as question. Offer 2-4 short choices when helpful and continue with the answer. Use notify for FYI updates.";
+
+/** Same server, opposite rule: the person is reading a chat, not this desktop. */
+export const SUPPRESSED_INSTRUCTIONS =
+  "Glint is off for this session (Takopi/Telegram transport, headless run or explicit suppression). Do not call ask_user or notify. The person reads your reply in the chat, so put any question, choice list, or status in the reply text and finish the turn.";
+
+const SUPPRESSED_ASK_TEXT =
+  "Glint cannot ask for an answer in this delivery mode. Put the question or decision in your reply text instead. For Takopi/Telegram sessions, Takopi delivers it to Telegram.";
+const SUPPRESSED_NOTIFY_TEXT = "Skipped: Glint is off for this session.";
 
 export interface GlintServerOptions extends ClientOptions {
   agent?: string;
   project?: string;
+  /** Environment used for delivery resolution; read again for each tool call. */
+  env?: NodeJS.ProcessEnv;
+  /** Force suppression on or off instead of detecting it. */
+  suppressed?: boolean;
 }
 
 const askArgs = z.object({
-  question: z.string().min(1).describe("Question shown to the user in the Glint overlay."),
+  question: z.string().min(1).describe("Exact same question text already written in your output; shown verbatim in the Glint overlay."),
   choices: z
     .array(z.string().min(1))
     .max(9)
@@ -76,7 +89,17 @@ const notifyOutput = z.object({
 });
 
 export function createGlintServer(options: GlintServerOptions = {}): McpServer {
-  const server = new McpServer({ name: "glint", version: VERSION }, { instructions: SERVER_INSTRUCTIONS });
+  const deliveryMode = () => options.suppressed === undefined
+    ? glintDeliveryMode({ env: options.env }).mode
+    : options.suppressed ? "off" : "ring";
+  const instructions = deliveryMode() === "off" ? SUPPRESSED_INSTRUCTIONS
+    : deliveryMode() === "notify"
+      ? "Glint is in notify mode. Do not call ask_user; put questions and choices in your reply text. Use notify for non-blocking notices. Write your full final reply and stop."
+      : SERVER_INSTRUCTIONS;
+  const server = new McpServer(
+    { name: "glint", version: VERSION },
+    { instructions },
+  );
   const clientOptions: ClientOptions = {
     home: options.home,
     spawn: options.spawn,
@@ -88,7 +111,7 @@ export function createGlintServer(options: GlintServerOptions = {}): McpServer {
     {
       title: "Ask the user",
       description:
-        "Call the person through the Glint holocall overlay and wait until they answer, dismiss it, or the timeout passes. Use it whenever you would otherwise stop and wait in the terminal: you finished and need to know what's next, you are blocked on a decision, or you need approval. Put a one-line summary of where you are first, then the question. Offer 2-4 numbered choices when you can; the person may also type a free answer. The answer comes back as this tool's result, so keep working with it.",
+        "Call the person through the Glint holocall overlay only in the middle of work, when you must wait for an answer before continuing. First write the question in your output, then pass the exact same text as question. Offer 2-4 short choices when helpful; the person may also type a free answer. Continue with the answer. At the end of a turn (finished, blocked, or needs a decision), write your full reply as normal output, then stop without calling ask_user. The Stop hook shows your complete last message verbatim.",
       inputSchema: askArgs,
       outputSchema: askOutput,
       annotations: {
@@ -98,6 +121,15 @@ export function createGlintServer(options: GlintServerOptions = {}): McpServer {
       },
     },
     async (args, ctx) => {
+      if (deliveryMode() !== "ring") {
+        return toolResult(SUPPRESSED_ASK_TEXT, {
+          id: "suppressed",
+          status: "dismissed",
+          answer: null,
+          choiceIndex: null,
+          via: "dismiss",
+        });
+      }
       try {
         const result = await askUser(
           {
@@ -134,6 +166,7 @@ export function createGlintServer(options: GlintServerOptions = {}): McpServer {
       },
     },
     async (args, ctx) => {
+      if (deliveryMode() === "off") return toolResult(SUPPRESSED_NOTIFY_TEXT, { id: "suppressed", delivered: true });
       try {
         const result = await notifyUser(
           {

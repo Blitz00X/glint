@@ -81,6 +81,7 @@ const MARKER = "<!-- glint:rule -->";
 const END_MARKER = "<!-- /glint:rule -->";
 /** Rule texts written by older Glint versions (no end marker), so install can upgrade them in place. */
 const LEGACY_RULES = [
+  "## Glint (reach the user without the terminal)\n\nThe user does not watch this terminal. **Never ask the user anything in plain text** (no \"should I…?\", no option lists in your reply). Always call the `glint` MCP tool `ask_user` instead (it may appear as `glint_ask_user` or `mcp__glint__ask_user`), with 2–4 short `choices` when you can; the user can also type a free answer. Use the answer as their next message and keep going.\n\n- **Finished** or **blocked**: still call `ask_user`, with a one-line summary and the open issues listed, before you stop.\n- **Progress / FYI** that needs no reply: `notify`.\n- Set `agent` (e.g. \"Claude Code\", \"Codex\", \"OpenCode\", \"Antigravity\") and `project` (repo or folder name).\n- If `ask_user` returns `dismissed` or `timeout`, stop and summarize; don't call it again in a loop.",
   "## Glint (reach the user without the terminal)\n\nThe user does not watch this terminal. Whenever you would stop and wait for them, call them through Glint instead:\n\n- **Finished**, **blocked on a decision**, or **need approval** \u2192 call the `glint` MCP tool `ask_user` (the tool may appear as `glint_ask_user` or `mcp__glint__ask_user`). Start the question with a one-line summary of where you are, then ask. Offer 2\u20134 short `choices` when you can; the user may also type a free answer. Use the answer as their next message and keep going.\n- **Progress or FYI** that needs no reply \u2192 `notify`.\n- Always set `agent` (your product name, e.g. \"Claude Code\", \"Codex\", \"OpenCode\", \"Antigravity\") and `project` (the repo or folder name).\n- If `ask_user` returns `dismissed` or `timeout`, stop and summarize; do not call again in a loop.",
   "## Glint\n\nWhen you finish, get blocked, or need approval, call the glint MCP tool `ask_user` instead of waiting in the terminal.",
 ];
@@ -109,7 +110,7 @@ export function ruleText(): string {
   try {
     return fs.readFileSync(path.join(packageRoot(), "skills", "glint", "RULE.md"), "utf8").trim();
   } catch {
-    return "## Glint\n\nWhen you finish, get blocked, or need approval, call the glint MCP tool `ask_user` instead of waiting in the terminal.";
+    return "## Glint\n\nAt the end of a turn, write your full reply as normal output, then stop without calling ask_user. The Stop hook shows that reply verbatim. Only use ask_user in the middle of work when an answer is required to continue: first write the question in your output, then pass the exact same text as question.";
   }
 }
 

@@ -7,7 +7,9 @@ import test from "node:test";
 import { askUser } from "../src/client.js";
 import { createDaemon } from "../src/daemon.js";
 import {
+  agyHasPendingBackgroundTask,
   lastToolWasGlintAsk,
+  isTakopiSessionTitle,
   APPROVAL_CHOICES,
   DEFAULT_MAX_CHAIN,
   normalizeHookInput,
@@ -210,7 +212,7 @@ test("agy Stop: continue decision with the answer as reason; stop prints {}", as
   assert.equal(stop.stdout, "{}");
 });
 
-test("agy Stop: only a normal end of turn opens a call; executionNum drives the loop guard", async () => {
+test("agy Stop: only a normal end of turn opens a call; actual continuations drive the loop guard", async () => {
   const cancel = fakeDeps(answered("x"));
   const out = await runHook("agy", "stop", JSON.stringify({ conversationId: "c-1", cwd: "/w/p", terminationReason: "USER_CANCELED" }), cancel.deps);
   assert.equal(out.action, "stop");
@@ -228,6 +230,102 @@ test("agy Stop: only a normal end of turn opens a call; executionNum drives the 
   assert.equal(capped.stdout, "{}", "the loop guard stops a 'keep going' loop");
   const nextTurn = await runHook("agy", "stop", JSON.stringify({ ...base, executionNum: 0 }), keep.deps);
   assert.equal(JSON.parse(nextTurn.stdout).decision, "continue", "a new turn starts over");
+});
+
+const agyFixture = (name: string) => path.join(import.meta.dirname, "fixtures", `${name}.jsonl`);
+const agySteps = (name: string): Record<string, unknown>[] =>
+  fs.readFileSync(agyFixture(name), "utf8").trim().split("\n").map((line) => JSON.parse(line));
+
+test("agy Stop: pending background task goes idle without touching the chain", async () => {
+  const f = fakeDeps(answered("continue"), { GLINT_HOOK_MAX_CHAIN: "1" });
+  const chainFile = path.join(f.stateDir, "hook-chain.json");
+  const state = JSON.stringify({ "agy:bg": { count: 1, at: Date.now() } });
+  fs.writeFileSync(chainFile, state);
+  for (let executionNum = 0; executionNum < 3; executionNum++) {
+    const out = await runHook("agy", "stop", JSON.stringify({
+      conversationId: "bg", terminationReason: "NO_TOOL_CALL", executionNum,
+      transcriptPath: agyFixture("agy-background-pending"),
+    }), f.deps);
+    assert.equal(out.action, "stop");
+    assert.equal(out.stdout, "{}");
+    assert.match(out.reason!, /background task/);
+    assert.equal(fs.readFileSync(chainFile, "utf8"), state);
+  }
+  assert.equal(f.asked.length, 0);
+  assert.equal(f.notified.length, 0);
+});
+
+test("agy Stop: completion wakes a verbatim final call; skipped executionNums are not continuations", async () => {
+  const f = fakeDeps(answered("continue"), { GLINT_HOOK_MAX_CHAIN: "1" });
+  const base = { conversationId: "bg", terminationReason: "NO_TOOL_CALL", continuationActive: false };
+  for (let executionNum = 0; executionNum < 3; executionNum++) {
+    await runHook("agy", "stop", JSON.stringify({ ...base, executionNum, transcript_path: agyFixture("agy-background-pending") }), f.deps);
+  }
+  assert.equal(fs.existsSync(path.join(f.stateDir, "hook-chain.json")), false);
+  const complete = { ...base, executionNum: 3, transcript_path: agyFixture("agy-background-completed") };
+  const out = await runHook("agy", "stop", JSON.stringify(complete), f.deps);
+  assert.equal(out.action, "continue");
+  assert.equal(f.asked.length, 1);
+  assert.equal(f.asked[0]!.question, agySteps("agy-background-completed").at(-1)!.content);
+  const capped = await runHook("agy", "stop", JSON.stringify({ ...complete, executionNum: 4 }), f.deps);
+  assert.match(capped.reason!, /chain limit/);
+});
+
+test("agy Stop: no background task leaves normal verbatim behavior unchanged", async () => {
+  const f = fakeDeps(answered("continue"));
+  const out = await runHook("agy", "stop", JSON.stringify({
+    transcriptPath: agyFixture("agy-no-background"), terminationReason: "NO_TOOL_CALL",
+  }), f.deps);
+  assert.equal(out.action, "continue");
+  assert.equal(f.asked[0]!.question, agySteps("agy-no-background").at(-1)!.content);
+});
+
+test("agy chain: new user turn resets even if its first Stop was skipped", async () => {
+  const f = fakeDeps(answered("continue"), { GLINT_HOOK_MAX_CHAIN: "1" });
+  const file = path.join(tmp(), "turns.jsonl");
+  fs.copyFileSync(agyFixture("agy-no-background"), file);
+  const base = { conversationId: "bg", transcriptPath: file, terminationReason: "NO_TOOL_CALL" };
+  assert.equal((await runHook("agy", "stop", JSON.stringify({ ...base, executionNum: 0 }), f.deps)).action, "continue");
+  const pending = agySteps("agy-background-pending");
+  pending[0] = { ...pending[0], created_at: "2026-11-23T14:00:00Z", content: "Download another tool" };
+  fs.appendFileSync(file, pending.map((step) => JSON.stringify(step)).join("\n") + "\n");
+  assert.match((await runHook("agy", "stop", JSON.stringify({ ...base, executionNum: 0 }), f.deps)).reason!, /background task/);
+  fs.appendFileSync(file, agySteps("agy-background-completed").slice(3).map((step) => JSON.stringify(step)).join("\n") + "\n");
+  assert.equal((await runHook("agy", "stop", JSON.stringify({ ...base, executionNum: 1 }), f.deps)).action, "continue");
+  assert.equal(f.asked.length, 2);
+});
+
+test("agy background matching: current turn, exact task IDs, trusted records, fail open", async () => {
+  const pending = agySteps("agy-background-pending");
+  const completed = agySteps("agy-background-completed");
+  const done = completed[3]!;
+  const otherDone = { ...done, content: String(done.content).replaceAll("task-2", "task-20") };
+  const cases: Array<[string, unknown[], boolean]> = [
+    ["different task completion", [...pending, otherDone], true],
+    ["one of two tasks remains", [...pending, { ...pending[1], content: String(pending[1]!.content).replaceAll("task-2", "task-20") }, done], true],
+    ["matching completion", completed, false],
+    ["failure also completes", [...pending, { ...done, content: String(done.content).replace("code 0", "code 1") }], false],
+    ["mismatched sender", [...pending, { ...done, content: String(done.content).replace("sender=clean-conversation/task-2", "sender=other/task-2") }], true],
+    ["server restart stops tasks", [...pending, { ...done, content: '[Message] timestamp=2026-11-23T13:21:00Z sender=system priority=MESSAGE_PRIORITY_LOW content=[Notice] All your subagents and background tasks have been stopped due to server restart.' }], false],
+    ["old task before user", [pending[1], ...agySteps("agy-no-background")], false],
+    ["assistant quoting completion", [...pending, { ...done, source: "MODEL" }], true],
+    ["tool quoting start", [pending[0], { ...pending[1], status: "DONE" }, pending[2]], false],
+    ["missing user boundary", pending.slice(1), false],
+    ["malformed current turn", [...pending, null], false],
+  ];
+  const file = path.join(tmp(), "transcript.jsonl");
+  for (const [label, entries, expected] of cases) {
+    fs.writeFileSync(file, entries.map((entry) => JSON.stringify(entry)).join("\n") + "\n");
+    assert.equal(agyHasPendingBackgroundTask(file), expected, label);
+  }
+  fs.writeFileSync(file, pending.map((entry) => JSON.stringify(entry)).join("\n") + "\n{");
+  assert.equal(agyHasPendingBackgroundTask(file), false, "partial record");
+  fs.copyFileSync(agyFixture("agy-background-pending"), file);
+  assert.equal(agyHasPendingBackgroundTask(file, 250), false, "bounded tail without user boundary");
+  const f = fakeDeps(answered("continue"));
+  const out = await runHook("agy", "stop", JSON.stringify({ transcriptPath: file + ".missing", response: "Real final reply" }), f.deps);
+  assert.equal(out.action, "continue");
+  assert.equal(f.asked[0]!.question, "Real final reply");
 });
 
 test("Stop: typed stop phrases end the turn instead of becoming the next message", async () => {
@@ -386,7 +484,7 @@ test("hook against a real daemon via askUser: dismissed call stops cleanly", asy
   }
 });
 
-test("no double ring: if the agent's last tool this turn was glint ask_user, the Stop hook stays quiet", async () => {
+test("Stop still rings the final output after a mid-work glint ask_user", async () => {
   const dir = tmp();
   const transcript = path.join(dir, "t.jsonl");
   const lines = (lastTool: string) =>
@@ -401,8 +499,9 @@ test("no double ring: if the agent's last tool this turn was glint ask_user, the
   fs.writeFileSync(transcript, lines("mcp__glint__ask_user"));
   const quiet = fakeDeps(answered("x"));
   const out = await runHook("claude", "stop", claudeStop({ last_assistant_message: undefined, transcript_path: transcript }), quiet.deps);
-  assert.equal(out.action, "stop");
-  assert.equal(quiet.asked.length, 0);
+  assert.equal(out.action, "continue");
+  assert.equal(quiet.asked.length, 1);
+  assert.equal(quiet.asked[0]!.question, "OK, stopping here.");
 
   fs.writeFileSync(transcript, lines("Edit"));
   const rings = fakeDeps(answered("x"));
@@ -412,5 +511,139 @@ test("no double ring: if the agent's last tool this turn was glint ask_user, the
 
   const oc = fakeDeps(answered("x"));
   await runHook("opencode", "stop", JSON.stringify({ sessionID: "s", cwd: "/w", glint_consulted: true, chain: 0 }), oc.deps);
-  assert.equal(oc.asked.length, 0);
+  assert.equal(oc.asked.length, 1);
+});
+
+test("takopi sessions: every hook is a no-op, nothing rings and nothing is notified", async () => {
+  for (const env of [{ AGENTOS_TRANSPORT: "takopi" }, { GLINT_SUPPRESS: "1" }]) {
+    const { deps, asked, notified } = fakeDeps(answered("Apply it"), env);
+    const stop = await runHook(
+      "opencode",
+      "stop",
+      JSON.stringify({ sessionID: "s-takopi", cwd: "/w", last_assistant_message: "Should I deploy?" }),
+      deps,
+    );
+    assert.equal(stop.action, "noop");
+    assert.equal(stop.reason?.includes("takopi") || stop.reason?.includes("GLINT_SUPPRESS"), true);
+
+    const notice = await runHook(
+      "opencode",
+      "notify",
+      JSON.stringify({ sessionID: "s-takopi", cwd: "/w", last_assistant_message: "Done." }),
+      deps,
+    );
+    assert.equal(notice.action, "noop");
+    assert.equal(asked.length, 0, "no ask call");
+    assert.equal(notified.length, 0, "no notice");
+  }
+});
+
+test("takopi session title suppresses on a shared server too", async () => {
+  const { deps, asked, notified } = fakeDeps(answered("x"));
+  const out = await runHook(
+    "opencode",
+    "stop",
+    JSON.stringify({
+      sessionID: "s-shared",
+      session_title: "Takopi · Glint kapat",
+      cwd: "/home/user",
+      last_assistant_message: "Bitti, cevap Telegram'a gitti.",
+    }),
+    deps,
+  );
+  assert.equal(out.action, "noop");
+  assert.equal(asked.length, 0);
+
+  const notice = await runHook(
+    "opencode",
+    "notify",
+    JSON.stringify({ sessionID: "s-shared", session_title: "Takopi", cwd: "/home/user", last_assistant_message: "Done." }),
+    deps,
+  );
+  assert.equal(notice.action, "noop");
+  assert.equal(notified.length, 0);
+
+  const prefix = fakeDeps(answered("x"));
+  await runHook(
+    "opencode",
+    "stop",
+    JSON.stringify({ session_id: "s-prefix", sessionTitle: "  takopi: build", cwd: "/w", last_assistant_message: "Ship?" }),
+    prefix.deps,
+  );
+  assert.equal(prefix.asked.length, 0);
+});
+
+test("isTakopiSessionTitle: only a Takopi prefix, not a word that starts with it", () => {
+  assert.equal(isTakopiSessionTitle("Takopi"), true);
+  assert.equal(isTakopiSessionTitle("takopi · iş"), true);
+  assert.equal(isTakopiSessionTitle("  TAKOPI: deploy"), true);
+  assert.equal(isTakopiSessionTitle("Takopiden gelen mesaj"), false);
+  assert.equal(isTakopiSessionTitle("Glint · takopi"), false);
+  assert.equal(isTakopiSessionTitle(""), false);
+  assert.equal(isTakopiSessionTitle(undefined), false);
+});
+
+for (const harness of ["claude", "codex", "opencode", "agy"] as const) {
+  for (const question of [false, true]) {
+    test(`${harness} Stop: preserves a long ${question ? "question" : "reply"} verbatim after ask_user`, async () => {
+      const message = "  # Result\r\n\n" + "**Full output** with `code` and Türkçe.\n".repeat(180)
+        + (question ? "\nWhich option?\n1. Apply\n2. Review" : "\nFinished.") + "\n  ";
+      const { deps, asked } = fakeDeps(answered("That's all"));
+      await runHook(harness, "stop", JSON.stringify({
+        session_id: "verbatim", cwd: "/w/glint", last_assistant_message: message,
+        glint_consulted: true,
+      }), deps);
+      assert.equal(asked.length, 1);
+      assert.equal(asked[0]!.question, message);
+      assert.deepEqual(asked[0]!.choices, question ? ["Apply", "Review"] : []);
+    });
+  }
+}
+
+for (const harness of ["claude", "codex", "agy", "opencode"] as const) {
+  test(`${harness} Stop: notify delivers the full verbatim message without asking`, async () => {
+    const f = fakeDeps(answered("go"), { GLINT_MODE: "notify" });
+    const message = "  # Full reply\r\n" + "line\n".repeat(700) + "Ship it?\n  ";
+    const out = await runHook(harness, "stop", claudeStop({ last_assistant_message: message }), f.deps);
+    assert.equal(f.asked.length, 0);
+    assert.equal(f.notified.length, 1);
+    assert.equal(f.notified[0]!.message, message);
+    assert.equal(out.stdout, harness === "agy" ? "{}" : harness === "opencode" ? '{"action":"stop"}' : "");
+  });
+}
+
+test("off and notify: ask-tool/approval hooks defer to the harness; off sends nothing", async () => {
+  for (const mode of ["off", "notify"]) {
+    const f = fakeDeps(answered("go"), { GLINT_MODE: mode });
+    for (const tool_name of ["AskUserQuestion", "Bash"]) {
+      const out = await runHook("claude", "pretooluse", claudeStop({ tool_name, tool_input: { question: "Proceed?" } }), f.deps);
+      assert.equal(out.stdout, "");
+    }
+    if (mode === "off") {
+      await runHook("agy", "stop", claudeStop(), f.deps);
+      await runHook("claude", "notify", claudeStop(), f.deps);
+    }
+    assert.equal(f.asked.length, 0);
+    assert.equal(f.notified.length, 0);
+  }
+});
+
+test("agy notify mode: pending background task stays silent, completed reply is verbatim", async () => {
+  const f = fakeDeps(answered("go"), { GLINT_MODE: "notify" });
+  for (const fixture of ["agy-background-pending", "agy-background-completed"]) {
+    await runHook("agy", "stop", JSON.stringify({ transcriptPath: agyFixture(fixture), terminationReason: "NO_TOOL_CALL" }), f.deps);
+    assert.equal(f.notified.length, fixture.endsWith("pending") ? 0 : 1);
+  }
+  assert.equal(f.asked.length, 0);
+  assert.equal(f.notified[0]!.message, agySteps("agy-background-completed").at(-1)!.content);
+});
+
+test("notify hook: full verbatim text, pending agy task stays silent", async () => {
+  const f = fakeDeps(answered("go"), { GLINT_MODE: "notify" });
+  const message = "  # Final\r\n" + "line\n".repeat(700) + "  ";
+  await runHook("claude", "notify", claudeStop({ last_assistant_message: message }), f.deps);
+  assert.equal(f.notified[0]!.message, message);
+  await runHook("agy", "notify", JSON.stringify({ transcriptPath: agyFixture("agy-background-pending") }), f.deps);
+  assert.equal(f.notified.length, 1);
+  assert.equal(f.asked.length, 0);
 });

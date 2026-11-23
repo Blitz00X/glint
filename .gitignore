@@ -11,3 +11,6 @@ dnd-saved.json
 .env.*
 *.tar.gz
 .DS_Store
+!test/fixtures/*.jsonl
+.test-tmp/
+.verification/

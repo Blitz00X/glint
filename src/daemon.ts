@@ -449,7 +449,7 @@ function authorized(header: string | undefined, token: string): boolean {
   return timingSafeEqual(got, expected);
 }
 
-function readJson(req: http.IncomingMessage, limit = 65_536): Promise<unknown> {
+function readJson(req: http.IncomingMessage, limit = 262_144): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     let size = 0;

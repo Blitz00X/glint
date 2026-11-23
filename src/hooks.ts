@@ -1,10 +1,12 @@
 import fs from "node:fs";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { harnessName } from "./identity.js";
 import { captureOrigin, defaultOriginDeps } from "./origin.js";
 import { ensureHome, glintHome } from "./paths.js";
 import type { AskInput, AskResult, NotifyInput } from "./protocol.js";
 import { projectLabel } from "./project.js";
+import { glintDeliveryMode, sessionSuppressed } from "./suppress.js";
 
 /**
  * Layer 2 of Glint: deterministic lifecycle hooks.
@@ -20,6 +22,11 @@ export const HARNESSES = ["claude", "codex", "agy", "opencode"] as const;
 export type Harness = (typeof HARNESSES)[number];
 
 export type HookEvent = "stop" | "pretooluse" | "notify";
+
+/** Session titles Takopi gives its runs: "Takopi", "Takopi · …". */
+export function isTakopiSessionTitle(title: string | undefined): boolean {
+  return /^\s*takopi\b/i.test(title ?? "");
+}
 
 /**
  * Stop calls never get made-up buttons. When the agent's last message ends
@@ -344,6 +351,8 @@ export interface HookOutcome {
 export interface NormalizedHookInput {
   session: string;
   cwd: string;
+  /** Session title when the harness sends one (OpenCode plugin does). */
+  sessionTitle: string;
   lastMessage: string;
   stopHookActive: boolean;
   toolName: string;
@@ -420,9 +429,9 @@ export function normalizeHookInput(payload: Record<string, unknown>, fallbackCwd
   ]);
   const transcript = pickString(payload, ["transcript_path", "transcriptPath"]);
   if (!lastMessage && transcript) lastMessage = lastAssistantFromTranscript(transcript);
-  // agy numbers its Stop runs within a turn (executionNum: 0, 1, 2…); its
-  // continuationActive flag stays false in agy 1.5.x, so it can't be used.
-  const chainRaw = payload.chain ?? payload.executionNum;
+  // executionNum counts agy Stop invocations, including background-task
+  // stops we skip. Only an explicit caller-managed chain is a chain count.
+  const chainRaw = payload.chain;
   const toolCall = (payload.toolCall && typeof payload.toolCall === "object" ? payload.toolCall : {}) as Record<string, unknown>;
   const consultedGlint =
     payload.glint_consulted === true || (transcript ? lastToolWasGlintAsk(transcript) : false);
@@ -430,7 +439,8 @@ export function normalizeHookInput(payload: Record<string, unknown>, fallbackCwd
     consultedGlint,
     session,
     cwd,
-    lastMessage: lastMessage.trim(),
+    sessionTitle: pickString(payload, ["session_title", "sessionTitle"]),
+    lastMessage,
     stopHookActive: payload.stop_hook_active === true || payload.stopHookActive === true || payload.continuationActive === true,
     // agy sends {toolCall: {name, args}}.
     toolName: pickString(toolCall, ["name"]) || pickString(payload, ["tool_name", "toolName", "tool", "permission", "type"]),
@@ -536,6 +546,66 @@ function readTail(file: string, maxBytes: number): string {
   }
 }
 
+/**
+ * agy's Stop fields (terminationReason/continuationActive/executionNum) do
+ * not identify pending jobs. Match the brain transcript's task lifecycle,
+ * in file order, without relying on step_index being unique. Fail open if
+ * the current USER_INPUT boundary is missing from the bounded tail or the
+ * current turn contains unreadable records.
+ */
+export function agyHasPendingBackgroundTask(file: string, maxBytes = 2_000_000): boolean {
+  const lines = readTail(file, maxBytes).split("\n");
+  const turn: Record<string, unknown>[] = [];
+  let foundUser = false;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i]?.trim();
+    if (!line) continue;
+    let entry: Record<string, unknown>;
+    try {
+      const parsed: unknown = JSON.parse(line);
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return false;
+      entry = parsed as Record<string, unknown>;
+    } catch {
+      return false;
+    }
+    if (entry.type === "USER_INPUT") {
+      foundUser = true;
+      break;
+    }
+    turn.push(entry);
+  }
+  if (!foundUser) return false;
+  const pending = new Set<string>();
+  for (const entry of turn.reverse()) {
+    if (typeof entry.content !== "string") continue;
+    if (entry.source === "MODEL" && entry.type === "GENERIC" && entry.status === "RUNNING") {
+      const start = /^Tool is running as a background task with task id: (\S+)[ \t]*\r?$/m.exec(entry.content);
+      if (start) pending.add(start[1]!);
+    } else if (entry.source === "SYSTEM" && entry.type === "SYSTEM_MESSAGE") {
+      // Require the system envelope and matching sender, not text quoted in
+      // tool output or an assistant/user message. Failure results finish too.
+      const done = /^\[Message\] timestamp=\S+ sender=(\S+) priority=\S+ content=Task id "([^"\r\n]+)" finished with result:/m.exec(entry.content);
+      if (done && done[1] === done[2]) pending.delete(done[2]!);
+      if (/^\[Message\] timestamp=\S+ sender=system priority=\S+ content=\[Notice\] All your subagents and background tasks have been stopped due to server restart\./m.test(entry.content)) pending.clear();
+    }
+  }
+  return pending.size > 0;
+}
+
+/** Keep the new-turn reset even when executionNum=0 was a skipped Stop. */
+function agyTurn(payload: Record<string, unknown>): string | undefined {
+  const transcript = pickString(payload, ["transcript_path", "transcriptPath"]);
+  if (!transcript) return undefined;
+  const lines = readTail(transcript, 2_000_000).split("\n");
+  for (let i = lines.length - 1; i >= 0; i--) {
+    try {
+      const entry = JSON.parse(lines[i]!);
+      if (entry?.type === "USER_INPUT") return createHash("sha256").update(JSON.stringify(entry)).digest("hex");
+    } catch { /* Ignore partial tail records for turn identity only. */ }
+  }
+  return undefined;
+}
+
 /** Text of a user message entry in a Claude/Codex JSONL transcript, or "" if it isn't one. */
 function userText(entry: Record<string, unknown>): string {
   const message = (entry.message ?? entry.payload ?? entry) as Record<string, unknown>;
@@ -637,7 +707,7 @@ function clip(text: string, max: number): string {
 /* ---------- loop guard ---------- */
 
 interface ChainState {
-  [key: string]: { count: number; at: number };
+  [key: string]: { count: number; at: number; agyTurn?: string };
 }
 
 function chainFile(dir: string): string {
@@ -679,17 +749,24 @@ export function currentChain(
   now: number,
 ): number {
   if (input.chain != null) return input.chain;
+  // agy 1.5.x leaves continuationActive false. Use its zero only to reset a
+  // new turn; count actual Glint continuations locally, never skipped stops.
+  if (harness === "agy" && input.raw.executionNum === 0) return 0;
   const state = readChain(dir);
   const entry = state[key];
   if (!entry) return 0;
+  if (harness === "agy") {
+    const turn = agyTurn(input.raw);
+    if (turn && turn !== entry.agyTurn) return 0;
+  }
   if ((harness === "claude" || harness === "codex") && !input.stopHookActive) return 0;
   if (now - entry.at > CHAIN_RESET_MS) return 0;
   return entry.count;
 }
 
-function bumpChain(dir: string, key: string, count: number, now: number): void {
+function bumpChain(dir: string, key: string, count: number, now: number, agyTurn?: string): void {
   const state = readChain(dir);
-  state[key] = { count, at: now };
+  state[key] = { count, at: now, ...(agyTurn ? { agyTurn } : {}) };
   writeChain(dir, state, now);
 }
 
@@ -801,6 +878,9 @@ export async function runHook(
 ): Promise<HookOutcome> {
   const env = deps.env ?? process.env;
   const now = deps.now ?? Date.now;
+  // The person is not at this desktop: no call, no notice, no continuation.
+  const delivery = glintDeliveryMode({ env });
+  if (delivery.mode === "off") return noop(harness, event, `glint suppressed (${delivery.reason})`);
   const payload = parseHookPayload(rawInput);
   if (env.GLINT_HOOK_LOG === "1") {
     try {
@@ -812,6 +892,10 @@ export async function runHook(
     }
   }
   const input = normalizeHookInput(payload);
+  // A titled Takopi session can share an OpenCode server with the person's
+  // terminal, so the process tree alone is not enough there.
+  if (isTakopiSessionTitle(input.sessionTitle)) return noop(harness, event, "glint suppressed (takopi session title)");
+  if (sessionSuppressed(input.session)) return noop(harness, event, "glint suppressed (muted session)");
   const agent = harnessName(harness);
   const project = projectLabel(input.cwd);
   const origin = env.GLINT_ORIGIN === "0" ? undefined : captureOrigin({ cwd: input.cwd, title: lastUserPrompt(payload) }, { ...defaultOriginDeps(), env });
@@ -833,9 +917,13 @@ export async function runHook(
   }
 
   if (event === "notify") {
+    const transcript = pickString(payload, ["transcript_path", "transcriptPath"]);
+    if (harness === "agy" && transcript && agyHasPendingBackgroundTask(transcript)) {
+      return noop(harness, event, "agy background task still pending");
+    }
     const text = input.lastMessage || "Turn complete.";
     try {
-      await deps.notify({ message: clip(text, 1_900), ...identity });
+      await deps.notify({ message: text, ...identity });
     } catch {
       // Never fail the harness over a notice.
     }
@@ -843,6 +931,7 @@ export async function runHook(
   }
 
   if (event === "pretooluse") {
+    if (delivery.mode !== "ring") return noop(harness, event, "notify mode: defer to harness");
     if (isBuiltinAskTool(input.toolName)) return runAskTool(harness, input, identity, deps, env);
     return runApproval(harness, input, identity, deps, env);
   }
@@ -854,12 +943,17 @@ export async function runHook(
   if (harness === "agy" && terminationReason && terminationReason !== "NO_TOOL_CALL") {
     return { action: "stop", stdout: stopOutput(harness, "stop"), reason: `agy stopped with ${terminationReason}` };
   }
-  if (input.consultedGlint && env.GLINT_HOOK_ALWAYS !== "1") {
-    return {
-      action: "stop",
-      stdout: stopOutput(harness, "stop"),
-      reason: "the agent already called glint ask_user right before stopping",
-    };
+  const transcript = pickString(payload, ["transcript_path", "transcriptPath"]);
+  if (harness === "agy" && transcript && agyHasPendingBackgroundTask(transcript)) {
+    return { action: "stop", stdout: stopOutput(harness, "stop"), reason: "agy background task still pending" };
+  }
+  if (delivery.mode === "notify") {
+    try {
+      await deps.notify({ message: input.lastMessage || `${agent} stopped and is waiting for you. Anything else?`, ...identity });
+    } catch {
+      // A failed notice must never prevent the normal stop.
+    }
+    return { action: "stop", stdout: stopOutput(harness, "stop"), reason: "notify mode" };
   }
   const stateDir = deps.stateDir ?? glintHome();
   const key = `${harness}:${input.session || input.cwd}`;
@@ -873,7 +967,7 @@ export async function runHook(
     clearChain(stateDir, key, now());
     try {
       await deps.notify({
-        message: `Stopped after ${chain} hook continuations in a row (GLINT_HOOK_MAX_CHAIN=${maxChain}). Answer in the terminal to go on, or set GLINT_HOOK_MAX_CHAIN=0 to remove the cap.`,
+        message: `Stopped after ${chain} hook continuations in a row (GLINT_HOOK_MAX_CHAIN=${maxChain}). Answer in the terminal to go on.`,
         ...identity,
       });
     } catch {
@@ -883,14 +977,10 @@ export async function runHook(
   }
 
   const timeoutMs = envNumber(env, "GLINT_HOOK_TIMEOUT_MS", DEFAULT_HOOK_TIMEOUT_MS);
-  // An agent that asked in plain text instead of calling ask_user gets a real
-  // QUESTION call: its own question as the body, its listed options as buttons.
+  // Detection supplies buttons and call kind only. The body is always the
+  // complete last output, including markdown and surrounding whitespace.
   const plain = env.GLINT_DETECT_QUESTIONS === "0" ? null : detectPlainQuestion(input.lastMessage);
-  const question = plain
-    ? plain.body
-    : input.lastMessage
-      ? clip(input.lastMessage, 1_800)
-      : `${agent} stopped and is waiting for you. Anything else?`;
+  const question = input.lastMessage || `${agent} stopped and is waiting for you. Anything else?`;
   const result = await askWithDeadline(
     deps,
     {
@@ -913,7 +1003,7 @@ export async function runHook(
     return { action: "stop", stdout: stopOutput(harness, "stop"), reason: "user chose to stop" };
   }
   const message = plain ? answerMessage(result.answer, result.choiceIndex) : continuationMessage(result.answer, result.choiceIndex);
-  bumpChain(stateDir, key, chain + 1, now());
+  bumpChain(stateDir, key, chain + 1, now(), harness === "agy" ? agyTurn(input.raw) : undefined);
   return { action: "continue", stdout: stopOutput(harness, "continue", message), message };
 }
 
