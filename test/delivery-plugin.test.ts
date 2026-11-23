@@ -97,3 +97,20 @@ test("OpenCode v2: off is silent; notify keeps background guard and native quest
   assert.equal(nativeQuestions, 2);
   assert.equal(synthetic, 0);
 });
+
+test("OpenMausBot children (opencode acp under the OMB app) are silent in CLI and plugin", () => {
+  const tree: Record<number, ProcessSnapshot> = {
+    10: { comm: "opencode", argv: ["opencode", "acp"], ppid: 20 },
+    20: { comm: "openmausbot", argv: ["/tmp/.mount_OpenMaX/openmausbot", "--type=utility"], ppid: 30 },
+    30: { comm: "openmausbot", argv: ["/tmp/.mount_OpenMaX/openmausbot", "--no-sandbox"], ppid: 1 },
+  };
+  const proc = (pid: number) => tree[pid] ?? null;
+  for (const env of [{}, { GLINT_MODE: "ring" }]) {
+    assert.deepEqual(glintDeliveryMode({ env, ppid: 10, proc }), { mode: "off", reason: "openmausbot ancestor" });
+    assert.equal(plugin.deliveryMode({ env, ppid: 10, proc }), "off");
+  }
+  // The same `opencode acp` started from a normal terminal still rings.
+  const plain = (pid: number) => pid === 10 ? { comm: "opencode", argv: ["opencode", "acp"], ppid: 1 } : null;
+  assert.equal(glintDeliveryMode({ env: {}, ppid: 10, proc: plain }).mode, "ring");
+  assert.equal(plugin.deliveryMode({ env: {}, ppid: 10, proc: plain }), "ring");
+});

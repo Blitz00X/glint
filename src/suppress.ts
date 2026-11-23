@@ -128,6 +128,16 @@ export function isHeadlessProcess(entry: ProcessSnapshot): boolean {
   return false;
 }
 
+/**
+ * OpenMausBot runs its bots (and its own memory/triage jobs) as child harness
+ * processes such as `opencode acp`. Their replies already show in the
+ * OpenMausBot window, so Glint stays silent for anything it spawned.
+ */
+export function isOpenMausBotProcess(entry: ProcessSnapshot): boolean {
+  const names = [entry.comm, ...entry.argv.slice(0, 1)].map((v) => baseName(v ?? "").toLowerCase());
+  return names.some((name) => name === "openmausbot" || name === "openmausbot.appimage");
+}
+
 /** Explicit suppression and Takopi always stay silent, including with GLINT_MODE. */
 export function glintDeliveryMode(options: SuppressOptions = {}): DeliveryDecision {
   const env = options.env ?? process.env;
@@ -144,6 +154,7 @@ export function glintDeliveryMode(options: SuppressOptions = {}): DeliveryDecisi
       const entry = proc(pid);
       if (!entry) break;
       if (isTakopiProcess(entry)) return { mode: "off", reason: "takopi ancestor" };
+      if (isOpenMausBotProcess(entry)) return { mode: "off", reason: "openmausbot ancestor" };
       headless ||= isHeadlessProcess(entry);
       pid = entry.ppid;
     }

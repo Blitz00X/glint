@@ -116,6 +116,8 @@ export function deliveryMode({ env = process.env, ppid = process.pid, proc = rea
     const base = (value) => baseName(value).toLowerCase();
     if (base(comm) === "takopi" || argv.slice(0, 2).some((arg) => base(arg) === "takopi") ||
         ((argv[1] === "-m" || argv[1] === "run") && base(argv[2]) === "takopi")) return "off";
+    // OpenMausBot shows its bots' replies itself (same rule as src/suppress.ts).
+    if ([comm, argv[0]].some((v) => ["openmausbot", "openmausbot.appimage"].includes(base(v || "")))) return "off";
     headless ||= isHeadlessProcess(entry);
     pid = entry.ppid;
   }

@@ -6,6 +6,11 @@ Earlier releases are recorded in Git tags (`v0.3.0`, `v0.3.1`).
 
 ### Changed
 
+- **Sessions started by OpenMausBot stay silent.** When a harness process
+  (for example `opencode acp` for a bot or OpenMausBot's own memory triage)
+  has the OpenMausBot app as an ancestor, Glint resolves delivery to `off`
+  in both the CLI hooks/MCP and the OpenCode plugin. The replies already
+  show in the OpenMausBot window.
 - **Loop guard is a last-resort brake, not a conversation limit.** The default
   `GLINT_HOOK_MAX_CHAIN` is now 50 instead of 8, and `0` disables the cap.
   A person typing answers turn by turn no longer gets cut off after eight
